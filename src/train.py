@@ -69,31 +69,37 @@ def main(seed: int = 0):
 
     print_comparison_table(results)
 
-    # 5. Detection delay / false alarm rate, if a clear injected drift exists
-    #    (works out of the box on synthetic streams; on raw Elec2, which has
-    #    natural recurring drift, treat this section as illustrative).
-    true_drift_index = warmup_idx + len(errors) // 2  # placeholder marker
-    true_windows = [(true_drift_index - 50, true_drift_index + 200)]
+    # 5. Detection delay / false alarm rate.
+    #    IMPORTANT: Elec2 does not provide a verified ground-truth drift label.
+    #    The midpoint marker below is therefore only an illustrative proxy, not
+    #    a genuine labeled drift event.
+    proxy_drift_index = warmup_idx + len(errors) // 2
+    proxy_window = [(proxy_drift_index - 50, proxy_drift_index + 200)]
+    print("NOTE: No verified drift label is available for the raw Elec2 stream.")
+    print("The midpoint index is used only as an illustrative proxy for delay comparison.")
 
     for name, flags in [("ADWIN", np.where(adwin_flags)[0]),
                          ("DDM", np.where(ddm_flags)[0])]:
-        delay = detection_delay(flags, true_drift_index - warmup_idx)
-        far = false_alarm_rate(flags, [(s - warmup_idx, e - warmup_idx) for s, e in true_windows],
-                                len(errors))
-        print(f"{name}: detection delay={delay}, false alarm rate={far:.3f}")
+        delay = detection_delay(flags, proxy_drift_index - warmup_idx)
+        far = false_alarm_rate(
+            flags,
+            [(s - warmup_idx, e - warmup_idx) for s, e in proxy_window],
+            len(errors),
+        )
+        print(f"{name}: illustrative proxy detection delay={delay}, false alarm rate={far:.3f}")
 
     lstm_alarm_idx = centers_test[forecasts["lstm"] >= 0.5]
     gru_alarm_idx = centers_test[forecasts["gru"] >= 0.5]
     for name, flags in [("LSTM", lstm_alarm_idx), ("GRU", gru_alarm_idx)]:
-        delay = detection_delay(np.array(flags), true_drift_index - warmup_idx)
-        print(f"{name}: detection delay={delay}")
+        delay = detection_delay(np.array(flags), proxy_drift_index - warmup_idx)
+        print(f"{name}: illustrative proxy detection delay={delay}")
 
     # 6. Plot
     out_path = plot_signal_and_alarms(
         confs, ents, errors, adwin_flags, ddm_flags,
         lstm_prob=forecasts["lstm"], lstm_centers=centers_test,
         gru_prob=forecasts["gru"], gru_centers=centers_test,
-        true_drift_index=true_drift_index - warmup_idx,
+        true_drift_index=proxy_drift_index - warmup_idx,
         out_path="outputs/signals.png",
     )
     print(f"Saved plot to {out_path}")

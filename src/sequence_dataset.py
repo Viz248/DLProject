@@ -23,7 +23,21 @@ def make_windows(confidences: np.ndarray, entropies: np.ndarray, errors: np.ndar
         y: (N,) binary future-degradation labels
         centers: (N,) index t (end of window) for each sample, for alignment
                  with ADWIN/DDM flags in evaluation
+
+    Label rule:
+        A window ending at time t is labeled positive if the mean error over the
+        next `horizon` steps exceeds the mean error over the previous
+        `window_len` steps by more than `degradation_delta`.
+
+    This is a proxy supervision target for future degradation, not a verified
+    ground-truth drift label. It is intentionally aligned with the project's
+    early-warning objective.
     """
+    if window_len <= 0 or horizon <= 0:
+        raise ValueError("window_len and horizon must be positive integers.")
+    if degradation_delta < 0:
+        raise ValueError("degradation_delta must be non-negative.")
+
     n = len(errors)
     X, y, centers = [], [], []
 

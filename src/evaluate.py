@@ -34,8 +34,11 @@ def classification_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: fl
 def detection_delay(flag_indices: np.ndarray, true_drift_index: int):
     """flag_indices: sorted array of indices (in the same coordinate system
     as true_drift_index) where a method raised an alarm.
-    Returns delay in samples (>=0) to the first alarm at/after the true
-    drift point, or None if no such alarm exists."""
+
+    Returns the delay in samples to the first alarm at or after the drift point.
+    If the drift point is only a proxy/illustrative marker rather than a verified
+    ground-truth drift event, the caller should label the result as such.
+    """
     after = flag_indices[flag_indices >= true_drift_index]
     if len(after) == 0:
         return None
@@ -44,7 +47,13 @@ def detection_delay(flag_indices: np.ndarray, true_drift_index: int):
 
 def false_alarm_rate(flag_indices: np.ndarray, true_drift_windows: list, total_len: int):
     """true_drift_windows: list of (start, end) tuples marking legitimate
-    drift periods. Any alarm outside all windows counts as a false alarm."""
+    drift periods. Any alarm outside all windows counts as a false alarm.
+
+    This metric is only meaningful when the drift windows represent real, known
+    drift labels. If the windows are only illustrative proxy regions, the
+    caller should treat the resulting rate as a proxy evaluation rather than a
+    fully verified measure.
+    """
     if len(flag_indices) == 0:
         return 0.0
 
