@@ -111,3 +111,33 @@ def print_comparison_table(results: dict):
     for name, m in results.items():
         print(f"{name:<12}{m['precision']:>10.3f}{m['recall']:>10.3f}"
               f"{m['f1']:>10.3f}{m['accuracy']:>10.3f}{m['auc']:>10.3f}")
+
+
+def print_final_comparison_table(results: dict, drift_metrics: dict):
+    """Print a final summary table combining classification metrics and
+    proxy drift delays / false-alarm rates.
+    """
+
+    def fmt(value):
+        if value is None:
+            return "n/a"
+        if isinstance(value, (float, np.floating)):
+            if np.isnan(value):
+                return "nan"
+            return f"{value:.3f}"
+        return str(value)
+
+    print("\nFinal comparison table (proxy drift points only):")
+    print(f"{'Method':<12}{'Precision':>10}{'Recall':>10}{'F1':>10}{'Accuracy':>10}{'AUC':>10}{'Delay':>10}{'FAR':>10}")
+
+    for method in ("LSTM", "GRU", "ADWIN", "DDM"):
+        metrics = results.get(method, {})
+        drift = drift_metrics.get(method, {})
+        precision = metrics.get("precision")
+        recall = metrics.get("recall")
+        f1 = metrics.get("f1")
+        accuracy = metrics.get("accuracy")
+        auc = metrics.get("auc")
+        delay = drift.get("delay")
+        far = drift.get("far")
+        print(f"{method:<12}{fmt(precision):>10}{fmt(recall):>10}{fmt(f1):>10}{fmt(accuracy):>10}{fmt(auc):>10}{fmt(delay):>10}{fmt(far):>10}")

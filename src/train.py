@@ -11,6 +11,9 @@ End-to-end pipeline:
 Run from the `project/` directory:  python -m src.train
 """
 import os
+import pickle
+from pathlib import Path
+
 import numpy as np
 
 from src.preprocessing import build_stream
@@ -19,10 +22,13 @@ from src.drift_detectors import run_adwin, run_ddm
 from src.sequence_dataset import make_windows
 from src.rnn_layers import RNNDriftDetector
 from src.evaluate import (classification_metrics, detection_delay, false_alarm_rate,
-                           plot_signal_and_alarms, print_comparison_table)
+                           plot_signal_and_alarms, print_comparison_table,
+                           print_final_comparison_table)
+
+ARTIFACT_PATH = Path("outputs/pipeline_artifacts.pkl")
 
 
-def main(seed: int = 0):
+def run_training(seed: int = 0, artifact_path: str | Path = ARTIFACT_PATH):
     os.makedirs("outputs", exist_ok=True)
     rng = np.random.default_rng(seed)
 
@@ -78,6 +84,7 @@ def main(seed: int = 0):
     print("NOTE: No verified drift label is available for the raw Elec2 stream.")
     print("The midpoint index is used only as an illustrative proxy for delay comparison.")
 
+    drift_summary = {}
     for name, flags in [("ADWIN", np.where(adwin_flags)[0]),
                          ("DDM", np.where(ddm_flags)[0])]:
         delay = detection_delay(flags, proxy_drift_index - warmup_idx)
@@ -86,25 +93,54 @@ def main(seed: int = 0):
             [(s - warmup_idx, e - warmup_idx) for s, e in proxy_window],
             len(errors),
         )
+        drift_summary[name] = {"delay": delay, "far": far}
         print(f"{name}: illustrative proxy detection delay={delay}, false alarm rate={far:.3f}")
 
     lstm_alarm_idx = centers_test[forecasts["lstm"] >= 0.5]
     gru_alarm_idx = centers_test[forecasts["gru"] >= 0.5]
     for name, flags in [("LSTM", lstm_alarm_idx), ("GRU", gru_alarm_idx)]:
         delay = detection_delay(np.array(flags), proxy_drift_index - warmup_idx)
-        print(f"{name}: illustrative proxy detection delay={delay}")
+        far = false_alarm_rate(np.array(flags), [(s - warmup_idx, e - warmup_idx) for s, e in proxy_window], len(errors))
+        drift_summary[name] = {"delay": delay, "far": far}
+        print(f"{name}: illustrative proxy detection delay={delay}, false alarm rate={far:.3f}")
+
+    print_final_comparison_table(results, drift_summary)
 
     # 6. Plot
+    plot_path = "outputs/signals.png"
     out_path = plot_signal_and_alarms(
         confs, ents, errors, adwin_flags, ddm_flags,
         lstm_prob=forecasts["lstm"], lstm_centers=centers_test,
         gru_prob=forecasts["gru"], gru_centers=centers_test,
         true_drift_index=proxy_drift_index - warmup_idx,
-        out_path="outputs/signals.png",
+        out_path=plot_path,
     )
     print(f"Saved plot to {out_path}")
 
-    return results
+    artifact = {
+        "results": results,
+        "drift_summary": drift_summary,
+        "forecasts": {"lstm": forecasts["lstm"], "gru": forecasts["gru"]},
+        "confs": confs,
+        "ents": ents,
+        "errors": errors,
+        "adwin_flags": adwin_flags,
+        "ddm_flags": ddm_flags,
+        "centers_test": centers_test,
+        "proxy_drift_index": proxy_drift_index - warmup_idx,
+        "plot_path": plot_path,
+        "warmup_idx": warmup_idx,
+    }
+
+    artifact_path = Path(artifact_path)
+    with artifact_path.open("wb") as f:
+        pickle.dump(artifact, f)
+    print(f"Saved training artifacts to {artifact_path}")
+    return artifact
+
+
+def main(seed: int = 0):
+    return run_training(seed=seed)
 
 
 if __name__ == "__main__":
