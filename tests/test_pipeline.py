@@ -474,3 +474,43 @@ class TestBaselinesNoLeakage:
         y = rng.integers(0, 2, 400); p = np.clip(y * 0.3 + rng.uniform(size=400) * .7, 0, 1)
         t = select_threshold_precision(y, p, min_recall=0.25)
         assert 0.0 <= t <= 1.0
+
+
+# ------------------------------------------------------------------ #
+#  Demo: drift injection and verdict rules                             #
+# ------------------------------------------------------------------ #
+class TestDemo:
+    def _errs(self, p, n, seed):
+        return np.random.default_rng(seed).binomial(1, p, n)
+
+    def test_verdict_drift(self):
+        from src.demo import verdict, ONSET
+        v = verdict(self._errs(0.10, 2000, 0), self._errs(0.30, 2000, 1),
+                    {"ADWIN": np.array([ONSET + 80]), "DDM": np.array([], int)})
+        assert v["label"] == "DRIFT" and v["severity"] == "moderate"
+        assert v["change_pp"] == pytest.approx(20, abs=3)
+
+    def test_verdict_no_drift(self):
+        from src.demo import verdict
+        e = self._errs(0.10, 4000, 2)
+        v = verdict(e[:2000], e[2000:], {"ADWIN": np.array([], int), "DDM": np.array([], int)})
+        assert v["label"] == "NO DRIFT"
+
+    def test_verdict_uncertain_without_detector(self):
+        """A large rise that no established detector confirms is not called drift."""
+        from src.demo import verdict
+        v = verdict(self._errs(0.10, 2000, 3), self._errs(0.30, 2000, 4),
+                    {"ADWIN": np.array([], int), "DDM": np.array([], int)})
+        assert v["label"] == "UNCERTAIN"
+
+    def test_inject_flips_only_after_onset(self):
+        from src.demo import inject, ONSET
+        n = ONSET + 2000
+        X = np.zeros((n, 8)); y = np.zeros(n, dtype=int)
+        period = (np.arange(n) % 48) / 47
+        Xs, ys, flip = inject(X, y, period, "sudden", 0.25)
+        assert not flip[:ONSET].any()
+        assert flip[ONSET:].mean() == pytest.approx(0.25, abs=0.01)
+        assert (ys[flip] == 1).all() and (ys[~flip] == 0).all()
+        _, _, none = inject(X, y, period, "none", 0.0)
+        assert not none.any()

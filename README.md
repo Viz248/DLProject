@@ -17,11 +17,13 @@ src/sequence_dataset.py     sliding windows, degradation labels, window split
 src/drift_detectors.py      ADWIN / DDM wrappers + synthetic benchmarks
 src/early_warning.py        event-level early-warning evaluation (new)
 src/label_experiment.py     validation-only comparison of label reference windows
+src/demo.py                 drift demo: inject known drift, run the system, give a verdict
+demo/index.html             demo dashboard (reads demo/demo_data.js)
 src/evaluate.py             metrics, baselines, threshold tuning, plots
 src/gradcheck.py            numerical gradient verification
 src/train.py                end-to-end pipeline
 src/report.py               print the saved result tables
-tests/test_pipeline.py      46 unit / regression tests
+tests/test_pipeline.py      50 unit / regression tests
 docs/results/               snapshot of the results and figures from the final run
 docs/results/label_experiment/  label experiment (validation table + the R=100 test run)
 ```
@@ -30,7 +32,7 @@ docs/results/label_experiment/  label experiment (validation table + the R=100 t
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v          # 46 tests
+python -m pytest tests/ -v          # 50 tests
 python -m src.gradcheck             # LSTM/GRU gradient check
 python -m src.train                 # full pipeline (~11-25 min on one CPU core)
 python -m src.train --quick         # ~1 min smoke run
@@ -41,6 +43,27 @@ python -m src.train --reference-len 100   # full pipeline with the longer-refere
 ```
 
 Outputs go to `results/` (JSON tables), `reports/figures/` (plots) and `artifacts/` (model parameters, signal arrays). These folders are gitignored because they are regenerable; the committed snapshot of the final run is in `docs/results/`.
+
+---
+
+## Demo: drift / no drift / uncertain
+
+```bash
+python -m src.demo                                    # all 9 scenarios, ~2 min (needs a finished src.train run)
+python -m src.demo --scenario sudden --severity 0.25  # one scenario in the terminal
+```
+
+Then open `demo/index.html` in a browser (it reads `demo/demo_data.js`, which is committed, so the dashboard works without rerunning).
+
+The demo replays the real system on the Elec2 test stream. At test step 4,000 it injects drift of a known type and size; the MLP keeps predicting and learning online, ADWIN and DDM watch its errors, and the trained LSTM reads its confidence/entropy. The 2,000 steps before the injection are compared with the 2,000 after:
+
+* **Scenarios:** no drift (real stream); sudden and gradual concept drift (the up/down rule reverses during 10 / 25 / 50 % of the day's half-hour slots); feature shift (price inputs +1 / +2.5 standard deviations, labels unchanged).
+* **DRIFT** - the error rate rose significantly (moving-block bootstrap 95 % CI above 0), by at least 5 percentage points, and ADWIN or DDM fired. Severity: mild < 10 pp, moderate 10-20 pp, severe > 20 pp.
+* **NO DRIFT** - no significant rise, estimated change < 5 pp, no ADWIN/DDM alarm.
+* **UNCERTAIN** - the evidence disagrees (e.g. a rise no detector confirms, or an alarm with a small change).
+* The output reports accuracy before -> after (pp and relative), the error-rate change with its CI, the worst 200-step error rate, each detector's delay, and the label-free signals.
+
+What the demo shows: every injected concept drift is called DRIFT, with accuracy drops that grow with the injected size, and ADWIN reacts faster than DDM in every case but the weakest gradual drift (where they tie within 10 steps). The feature shifts come out UNCERTAIN (small accuracy cost, detectors mostly quiet). The real stream comes out NO DRIFT. The LSTM's alarm rate does **not** rise under injected drift, which matches the main finding that the forecaster gives no early warning; the MLP's confidence does drop under strong concept drift.
 
 ---
 
