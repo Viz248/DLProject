@@ -22,7 +22,7 @@ demo/index.html             demo dashboard (reads demo/demo_data.js)
 src/evaluate.py             metrics, baselines, threshold tuning, plots
 src/gradcheck.py            numerical gradient verification
 src/train.py                end-to-end pipeline
-src/report.py               print the saved result tables
+src/report.py               print the final metrics of every algorithm
 tests/test_pipeline.py      50 unit / regression tests
 docs/results/               snapshot of the results and figures from the final run
 docs/results/label_experiment/  label experiment (validation table + the R=100 test run)
@@ -39,7 +39,7 @@ python -m src.gradcheck             # LSTM/GRU gradient check
 python -m src.train                 # full pipeline (~11-25 min on one CPU core)
 python -m src.train --quick         # ~1 min smoke run
 python -m src.train --resume        # reuse trained LSTM/GRU + cached ablation runs
-python -m src.report                # print the tables from results/
+python -m src.report                # final metrics of every algorithm (from docs/)
 python -m src.label_experiment      # label look-back comparison, validation only (~20 min)
 python -m src.train --reference-len 100   # full pipeline with the longer-reference label
 ```
