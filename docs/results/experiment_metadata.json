@@ -1,0 +1,49 @@
+{
+  "data": "data/electricity.csv",
+  "warmup_frac": 0.1,
+  "train_frac": 0.6,
+  "val_frac": 0.2,
+  "temporal_gap": 40,
+  "window": 20,
+  "horizon": 20,
+  "delta": 0.15,
+  "n_hidden": 32,
+  "lr": 0.002,
+  "lr_decay": 0.75,
+  "epochs": 8,
+  "train_stride": 3,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "pos_weight_power": 0.5,
+  "hp_min_recall": 0.25,
+  "event_delta": 0.3,
+  "merge_gap": 40,
+  "lead_max": 30,
+  "tol": 60,
+  "refractory": 20,
+  "alarm_quantile": 0.95,
+  "alarm_history": 2000,
+  "n_samples": 45312,
+  "split_idx": {
+    "warmup_end": 4531,
+    "train_end": 28999,
+    "val_start": 29039,
+    "val_end": 37155,
+    "test_start": 37195,
+    "n": 45312
+  },
+  "scaler": "causal_expanding",
+  "pos_weight": 2.4567042319850465,
+  "n_train_windows": 24448,
+  "n_val_windows": 8116,
+  "n_test_windows": 8097,
+  "pos_rate": {
+    "train": 0.1421384162303665,
+    "val": 0.18962543124691966,
+    "test": 0.12486105965172287
+  },
+  "runtime_s": 675.206424635
+}
