@@ -1,0 +1,41 @@
+
+==================================================================
+1. Stream, MLP signals and windows
+==================================================================
+  windows train/val/test: 24448/8116/8097   MLP stream acc 0.8677
+  severe-degradation events: val 59, test 25
+
+==================================================================
+2. Forecaster (GRU) seed 0: train -> risk series
+==================================================================
+  best epoch 6, val AP 0.413  (212s)
+
+==================================================================
+3. Tune the four detector families on VALIDATION only (seed 0)
+==================================================================
+  CUSUM (plain)    h0=6.0 k=0.06 beta=0.0 gamma=0.0 | val F1 0.643 (P 0.79 R 0.54, 5.3/1000)
+  Gate-only        h0=6.0 k=0.1 beta=0.3 gamma=0.0 | val F1 0.677 (P 0.86 R 0.56, 5.2/1000)
+  Inject-only      h0=6.0 k=0.06 beta=0.0 gamma=0.5 | val F1 0.692 (P 0.83 R 0.59, 5.8/1000)
+  RiskGate-CUSUM   h0=6.0 k=0.1 beta=0.3 gamma=1.0 | val F1 0.731 (P 0.88 R 0.63, 5.9/1000)
+
+==================================================================
+4. Evaluate ONCE on the test stream (seed 0)
+==================================================================
+  CUSUM (plain)    alarms  26  recall 0.80 (chance 0.25) alarm-prec 0.88  F1 0.840
+  RiskGate-CUSUM   alarms  25  recall 0.80 (chance 0.24) alarm-prec 0.96  F1 0.873
+
+==================================================================
+5. Test results (mean over 1 forecaster seed(s); 25 events, 8097 steps)
+==================================================================
+Method                       Alarms  Recall  Chance  AlPrec     F1  Early  MedOff  FA/1000
+  CUSUM (plain)                  26    0.80    0.25    0.88  0.840   0.00      21      0.4
+  Gate-only                      22    0.76    0.21    0.95  0.846   0.00      20      0.1
+  Inject-only                    27    0.84    0.26    0.89  0.864   0.00      20      0.4
+  RiskGate-CUSUM                 25    0.80    0.24    0.96  0.873   0.00      19      0.1
+  Forecaster only                63    0.60    0.50    0.30  0.401   0.36      -6      5.4
+  Naive OR (CUSUM+Forecaster)     83    0.84    0.60    0.46  0.593   0.36       7      5.6
+  ADWIN                           1    0.04    0.01    1.00  0.077   0.04     -28      0.0
+  ADWIN(d=.05)                   10    0.24    0.11    0.60  0.343   0.04      38      0.5
+  DDM                             0    0.00    0.00     nan  0.000   0.00     n/a      0.0
+
+Done in 235s -> results/novelty_riskgate.json, reports/figures/novelty_riskgate.png
