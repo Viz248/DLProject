@@ -1,0 +1,67 @@
+{
+  "LSTM": {
+    "n_events": 25,
+    "n_alarms": 59,
+    "n_hits": 13,
+    "event_recall": 0.52,
+    "early_rate": 0.28,
+    "median_offset": -3.0,
+    "alarm_precision": 0.3050847457627119,
+    "false_alarms": 41,
+    "false_alarms_per_1000": 5.051127263767402,
+    "chance_event_recall": 0.47146666666666665,
+    "chance_alarm_precision": 0.26881355932203393
+  },
+  "GRU": {
+    "n_events": 25,
+    "n_alarms": 58,
+    "n_hits": 13,
+    "event_recall": 0.52,
+    "early_rate": 0.2,
+    "median_offset": 2.0,
+    "alarm_precision": 0.27586206896551724,
+    "false_alarms": 42,
+    "false_alarms_per_1000": 5.174325489712948,
+    "chance_event_recall": 0.4678666666666667,
+    "chance_alarm_precision": 0.2690804597701149
+  },
+  "ADWIN": {
+    "n_events": 25,
+    "n_alarms": 1,
+    "n_hits": 1,
+    "event_recall": 0.04,
+    "early_rate": 0.04,
+    "median_offset": -28.0,
+    "alarm_precision": 1.0,
+    "false_alarms": 0,
+    "false_alarms_per_1000": 0.0,
+    "chance_event_recall": 0.011066666666666667,
+    "chance_alarm_precision": 0.2733333333333333
+  },
+  "ADWIN(d=.05)": {
+    "n_events": 25,
+    "n_alarms": 10,
+    "n_hits": 6,
+    "event_recall": 0.24,
+    "early_rate": 0.04,
+    "median_offset": 38.0,
+    "alarm_precision": 0.6,
+    "false_alarms": 4,
+    "false_alarms_per_1000": 0.49279290378218554,
+    "chance_event_recall": 0.1032,
+    "chance_alarm_precision": 0.27266666666666667
+  },
+  "DDM": {
+    "n_events": 25,
+    "n_alarms": 0,
+    "n_hits": 0,
+    "event_recall": 0.0,
+    "early_rate": 0.0,
+    "median_offset": null,
+    "alarm_precision": NaN,
+    "false_alarms": 0,
+    "false_alarms_per_1000": 0.0,
+    "chance_event_recall": 0.0,
+    "chance_alarm_precision": NaN
+  }
+}
