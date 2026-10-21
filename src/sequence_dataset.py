@@ -15,6 +15,12 @@ The degradation label is:
     label(t) = 1  if  future_err(t) - past_err(t) > degradation_delta
                0  otherwise
 
+Optionally the reference rate can use a longer look-back R = reference_len:
+    past_err(t)   = mean(err[max(0, t - R) : t])
+so the label means "the error rate is about to exceed its longer-run level"
+rather than "it is about to exceed the last window_len steps", which partly
+measures mean reversion.  R = window_len (the default) is the original label.
+
 The INPUT to the model is the sequence of [C_s, H_s] pairs for
 s in [t - window_len, t) — strictly PAST information at prediction time t.
 
@@ -35,7 +41,8 @@ def make_windows(confidences: np.ndarray,
                  window_len: int = 20,
                  horizon: int = 20,
                  degradation_delta: float = 0.15,
-                 extra_features: Optional[np.ndarray] = None):
+                 extra_features: Optional[np.ndarray] = None,
+                 reference_len: Optional[int] = None):
     """
     Build the sequence dataset.
 
@@ -46,15 +53,21 @@ def make_windows(confidences: np.ndarray,
     extra_features : optional (N, F) array of additional input features.
         If provided, each timestep input becomes [C_t, H_t, *extra_t].
     window_len, horizon, degradation_delta : see module docstring.
+    reference_len : look-back of the reference error rate in the label
+        (None -> window_len, the original label).  Only the label changes;
+        the inputs and the set of windows are the same for every value.
 
     Returns
     -------
     X       : (M, window_len, n_features)   — sequence inputs
     y       : (M,)                          — binary degradation labels
     centers : (M,)                          — stream index t (end of each window)
-    past_err_arr, future_err_arr : (M,) — stored for transparency / debugging
+    past_err_arr, future_err_arr : (M,) — reference and future error rates
+        used in the label, stored for transparency / debugging
     """
     n = len(errors)
+    ref_len = window_len if reference_len is None else int(reference_len)
+    assert ref_len >= 1, "reference_len must be positive"
     assert len(confidences) == n and len(entropies) == n, "Array length mismatch"
 
     if extra_features is not None:
@@ -84,7 +97,7 @@ def make_windows(confidences: np.ndarray,
             window = np.stack([c_win, h_win], axis=1)    # (window_len, 2)
 
         # --- label: uses future info — never enters model input ---
-        past_err   = error_rate(t - window_len, t)
+        past_err   = error_rate(max(0, t - ref_len), t)
         future_err = error_rate(t, t + horizon)
         label      = int((future_err - past_err) > degradation_delta)
 
@@ -102,14 +115,29 @@ def make_windows(confidences: np.ndarray,
 
 
 def split_windows(X, y, centers, past_err, future_err,
-                  val_start_abs, test_start_abs):
+                  val_start_abs, test_start_abs, train_end_abs=None,
+                  val_end_abs=None):
     """
     Split pre-built windows into train / val / test using absolute stream
-    indices stored in `centers`.  Windows whose centre falls inside the
-    temporal gap (between splits) are simply excluded — no boundary leakage.
+    indices stored in `centers`.
+
+    A window with centre t reads inputs from [t - window_len, t) and its label
+    reads errors from [t, t + horizon).  To keep the splits independent:
+
+      train : centers <  train_end_abs      (defaults to val_start_abs)
+      val   : val_start_abs <= centers < val_end_abs  (defaults to test_start_abs)
+      test  : centers >= test_start_abs
+
+    Windows whose centre falls in a gap are dropped.  With a gap of at least
+    window_len + horizon (default 40 = 20 + 20) no label region of one split
+    overlaps the input region of the next.
     """
-    tr  = centers < val_start_abs
-    val = (centers >= val_start_abs) & (centers < test_start_abs)
+    if train_end_abs is None:
+        train_end_abs = val_start_abs
+    if val_end_abs is None:
+        val_end_abs = test_start_abs
+    tr  = centers < train_end_abs
+    val = (centers >= val_start_abs) & (centers < val_end_abs)
     te  = centers >= test_start_abs
 
     def _sel(mask):

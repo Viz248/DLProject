@@ -1,0 +1,6 @@
+R=20    pos tr/val=0.142/0.188  AP LSTM=0.401+-0.016  LowPastErr=0.337  GBM=0.406  | lift LSTM=2.13 past=1.79  skill=0.342+-0.083  [299s]
+R=100   pos tr/val=0.125/0.170  AP LSTM=0.312+-0.007  LowPastErr=0.235  GBM=0.329  | lift LSTM=1.84 past=1.38  skill=0.454+-0.043  [630s]
+R=500   pos tr/val=0.119/0.161  AP LSTM=0.260+-0.005  LowPastErr=0.218  GBM=0.260  | lift LSTM=1.61 past=1.35  skill=0.259+-0.032  [883s]
+R=2000  pos tr/val=0.124/0.165  AP LSTM=0.218+-0.009  LowPastErr=0.202  GBM=0.255  | lift LSTM=1.32 past=1.23  skill=0.096+-0.057  [1127s]
+
+Best by validation skill: R=100 (gain over R=20: +0.111, seed spread 0.083) -> chosen R=100

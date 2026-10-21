@@ -1,1 +1,0 @@
-bash: ..venvScriptspython.exe: command not found

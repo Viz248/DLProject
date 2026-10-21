@@ -79,6 +79,27 @@ def select_threshold(y_val: np.ndarray, probs_val: np.ndarray,
     return best_thresh
 
 
+def select_threshold_precision(y_val: np.ndarray, probs_val: np.ndarray,
+                               min_recall: float = 0.25) -> float:
+    """
+    High-precision operating point: among thresholds whose VALIDATION recall is
+    at least `min_recall`, return the one with the highest precision.  Falls
+    back to the best-F1 threshold if none qualifies.  (Targeting a precision
+    value directly does not transfer well here because the positive rate
+    differs between validation and test.)
+    """
+    best_t, best_prec = None, -1.0
+    for t in np.linspace(0.05, 0.95, 91):
+        preds = (probs_val >= t).astype(int)
+        if preds.sum() < 50:                  # ignore degenerate tiny alarm sets
+            continue
+        prec = precision_score(y_val, preds, zero_division=0, pos_label=1)
+        rec  = recall_score(y_val, preds, zero_division=0, pos_label=1)
+        if rec >= min_recall and prec > best_prec:
+            best_t, best_prec = float(t), prec
+    return best_t if best_t is not None else select_threshold(y_val, probs_val, "f1")
+
+
 # ------------------------------------------------------------------ #
 #  Degradation forecasting metrics                                     #
 # ------------------------------------------------------------------ #
@@ -115,28 +136,57 @@ def majority_class_metrics(y_true: np.ndarray) -> dict:
         "recall_pos":    float(recall_score(y_true, y_pred, zero_division=0, pos_label=1)),
         "f1_pos":        float(f1_score(y_true, y_pred, zero_division=0, pos_label=1)),
         "accuracy":      float(accuracy_score(y_true, y_pred)),
-        "pr_auc":        float("nan"),
+        "pr_auc":        float(y_true.mean()),   # constant score -> AP = prevalence
     }
 
 
-def rolling_mean_baseline_metrics(signal: np.ndarray, y_true: np.ndarray,
-                                    window: int = 20, threshold: float = None) -> dict:
-    """
-    Predict degradation when rolling mean of `signal` (e.g. entropy)
-    exceeds a threshold.  Threshold tuned to maximise F1 if not provided.
-    """
-    roll = np.convolve(signal, np.ones(window) / window, mode="same")
-    if threshold is None:
-        threshold = select_threshold(y_true, roll, metric="f1")
-    y_pred = (roll >= threshold).astype(int)
+def always_positive_metrics(y_true: np.ndarray) -> dict:
+    """Trivial 'always warn' policy: recall 1, precision = prevalence."""
+    y_pred = np.ones_like(y_true)
     return {
-        "threshold":     threshold,
+        "threshold":     "always",
         "prevalence":    float(y_true.mean()),
         "precision_pos": float(precision_score(y_true, y_pred, zero_division=0, pos_label=1)),
-        "recall_pos":    float(recall_score(y_true, y_pred, zero_division=0, pos_label=1)),
+        "recall_pos":    1.0,
         "f1_pos":        float(f1_score(y_true, y_pred, zero_division=0, pos_label=1)),
         "accuracy":      float(accuracy_score(y_true, y_pred)),
-        "pr_auc":        float("nan"),
+        "pr_auc":        float(y_true.mean()),
+    }
+
+
+def _tune_score_threshold(y_val, s_val):
+    """Best-F1 threshold for an arbitrary-scale score, searched over validation
+    quantiles (never touches test data)."""
+    qs = np.unique(np.quantile(s_val, np.linspace(0.40, 0.995, 120)))
+    best_t, best_f = float(qs[0]), -1.0
+    for t in qs:
+        f = f1_score(y_val, (s_val >= t).astype(int), zero_division=0, pos_label=1)
+        if f > best_f:
+            best_f, best_t = f, float(t)
+    return best_t
+
+
+def score_baseline_metrics(s_val: np.ndarray, y_val: np.ndarray,
+                           s_test: np.ndarray, y_test: np.ndarray) -> dict:
+    """
+    Evaluate a non-learned baseline given a per-window scalar score where a
+    HIGHER score means "more likely degrading".  The decision threshold is
+    tuned on validation only, then applied once to the test windows.
+    """
+    thr    = _tune_score_threshold(y_val, s_val)
+    y_pred = (s_test >= thr).astype(int)
+    try:
+        ap = float(average_precision_score(y_test, s_test))
+    except ValueError:
+        ap = float("nan")
+    return {
+        "threshold":     thr,
+        "prevalence":    float(y_test.mean()),
+        "precision_pos": float(precision_score(y_test, y_pred, zero_division=0, pos_label=1)),
+        "recall_pos":    float(recall_score(y_test, y_pred, zero_division=0, pos_label=1)),
+        "f1_pos":        float(f1_score(y_test, y_pred, zero_division=0, pos_label=1)),
+        "accuracy":      float(accuracy_score(y_test, y_pred)),
+        "pr_auc":        ap,
     }
 
 
@@ -429,3 +479,42 @@ def print_table_c(det_results: dict):
               f"{md_str:>11}"
               f"{m.get('detection_rate', float('nan')):>9.3f}"
               f"{m.get('false_alarm_rate', float('nan')):>8.3f}")
+
+
+def print_table_d(ew: dict):
+    print("\n=== TABLE D - Early warning vs reactive detectors (test stream) ===")
+    hdr = (f"{'Method':<16}{'Alarms':>7}{'Events':>7}{'Recall':>8}{'Chance':>8}"
+           f"{'Early':>7}{'MedOff':>8}{'AlPrec':>8}{'FA/1000':>9}")
+    print(hdr)
+    for name, m in ew.items():
+        mo = m.get("median_offset")
+        mo_s = f"{mo:.0f}" if mo is not None else "N/A"
+        print(f"  {name:<14}{m['n_alarms']:>7}{m['n_events']:>7}"
+              f"{m['event_recall']:>8.3f}{m['chance_event_recall']:>8.3f}"
+              f"{m['early_rate']:>7.3f}{mo_s:>8}"
+              f"{m['alarm_precision']:>8.3f}{m['false_alarms_per_1000']:>9.1f}")
+
+
+def plot_early_warning(ew: dict, out_name: str = "early_warning.png"):
+    _ensure_dirs()
+    names = list(ew.keys())
+    rec   = [ew[n]["event_recall"] for n in names]
+    cha   = [ew[n]["chance_event_recall"] for n in names]
+    fa    = [ew[n]["false_alarms_per_1000"] for n in names]
+    x = np.arange(len(names)); w = 0.38
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+    axes[0].bar(x - w/2, rec, w, label="Event recall")
+    axes[0].bar(x + w/2, cha, w, label="Random alarms (same count)",
+                color="lightgray")
+    axes[0].set_xticks(x); axes[0].set_xticklabels(names, rotation=25, ha="right")
+    axes[0].set_ylim(0, 1.05); axes[0].set_ylabel("Fraction of degradation events hit")
+    axes[0].set_title("Hit rate vs chance"); axes[0].legend()
+    axes[1].bar(x, fa, color="tab:red", alpha=0.7)
+    axes[1].set_xticks(x); axes[1].set_xticklabels(names, rotation=25, ha="right")
+    axes[1].set_ylabel("Alarms matching no event / 1000 steps")
+    axes[1].set_title("False-alarm load")
+    plt.tight_layout()
+    path = os.path.join(FIG_DIR, out_name)
+    plt.savefig(path, dpi=150)
+    plt.close(fig)
+    return path

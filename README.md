@@ -1,202 +1,172 @@
 # Early Detection of Concept Drift and Model Degradation Using Deep Sequence Models
 
-**Research question:** Can internal prediction signals (confidence, entropy) from a deployed MLP be used by sequence models (LSTM/GRU) to *forecast* model degradation before conventional error-based drift detectors (ADWIN, DDM) react?
+**Research question:** can internal prediction signals (confidence, entropy) from a deployed MLP be used by sequence models (LSTM/GRU) to *forecast* model degradation before conventional error-based drift detectors (ADWIN, DDM) react?
+
+A NumPy MLP classifier runs prequentially over the **Elec2 electricity dataset** (45,312 samples). Custom NumPy LSTM and GRU models (manual backpropagation, no PyTorch/TensorFlow, gradient-checked) read windows of the MLP's confidence/entropy and predict whether its error rate is about to rise. They are compared with simple baselines and with ADWIN/DDM from `river`.
 
 ---
 
-## Project Overview
-
-This project implements a complete streaming-ML pipeline on the **Elec2 electricity market dataset** (45,312 samples). A NumPy MLP classifier runs prequentially over the stream, emitting per-timestep confidence and entropy signals. Custom NumPy LSTM and GRU models are trained to predict *future* model degradation from windows of those signals, and their performance is compared against ADWIN and DDM drift detectors from the `river` library.
-
-All models — MLP, LSTM, GRU — are implemented from scratch in NumPy with manual backpropagation (no PyTorch/TensorFlow). Gradient correctness is verified numerically.
-
----
-
-## Repository Structure
+## Repository structure
 
 ```
-DLProject/
-├── data/
-│   └── electricity.csv          # Elec2 dataset (not committed — see below)
-├── src/
-│   ├── __init__.py
-│   ├── preprocessing.py         # Load, scale, chronological 60/20/20 split
-│   ├── mlp.py                   # NumPy MLP + prequential runner
-│   ├── rnn_layers.py            # NumPy LSTM, GRU cells + SequenceHead
-│   ├── sequence_dataset.py      # Sliding-window builder + degradation labels
-│   ├── drift_detectors.py       # ADWIN / DDM wrappers + synthetic benchmarks
-│   ├── evaluate.py              # Metrics, threshold tuning, all plots
-│   ├── gradcheck.py             # Numerical gradient verification
-│   └── train.py                 # End-to-end orchestration (10-step pipeline)
-├── tests/
-│   └── test_pipeline.py         # 31 unit tests (all passing)
-├── reports/
-│   └── figures/                 # Generated plots (after running pipeline)
-├── results/                     # JSON metrics tables (after running pipeline)
-├── artifacts/                   # Saved model params + monitoring arrays
-├── requirements.txt
-├── .gitignore
-└── README.md
+data/electricity.csv        Elec2 dataset
+src/preprocessing.py        loading, causal scaling, warm-up / stream split
+src/mlp.py                  NumPy MLP + prequential runner
+src/rnn_layers.py           NumPy LSTM, GRU cells + readout head
+src/sequence_dataset.py     sliding windows, degradation labels, window split
+src/drift_detectors.py      ADWIN / DDM wrappers + synthetic benchmarks
+src/early_warning.py        event-level early-warning evaluation (new)
+src/label_experiment.py     validation-only comparison of label reference windows
+src/evaluate.py             metrics, baselines, threshold tuning, plots
+src/gradcheck.py            numerical gradient verification
+src/train.py                end-to-end pipeline
+src/report.py               print the saved result tables
+tests/test_pipeline.py      46 unit / regression tests
+docs/results/               snapshot of the results and figures from the final run
+docs/results/label_experiment/  label experiment (validation table + the R=100 test run)
 ```
 
----
-
-## Setup
-
-### 1. Clone
-
-```bash
-git clone https://github.com/Viz248/DLProject.git
-cd DLProject
-```
-
-### 2. Install dependencies
+## Setup and running
 
 ```bash
 pip install -r requirements.txt
+python -m pytest tests/ -v          # 46 tests
+python -m src.gradcheck             # LSTM/GRU gradient check
+python -m src.train                 # full pipeline (~11-25 min on one CPU core)
+python -m src.train --quick         # ~1 min smoke run
+python -m src.train --resume        # reuse trained LSTM/GRU + cached ablation runs
+python -m src.report                # print the tables from results/
+python -m src.label_experiment      # label look-back comparison, validation only (~20 min)
+python -m src.train --reference-len 100   # full pipeline with the longer-reference label
 ```
 
-Requirements: `numpy`, `pandas`, `scikit-learn`, `matplotlib`, `river`
-
-### 3. Place the dataset
-
-Download the Elec2 dataset and place it at `data/electricity.csv`.
-
-The file must have these columns:
-`date, day, period, nswprice, nswdemand, vicprice, vicdemand, transfer, class`
-
-Dataset source: https://datahub.io/core/openml-datasets/data/electricity  
-(45,312 rows, `class` column: UP / DOWN)
+Outputs go to `results/` (JSON tables), `reports/figures/` (plots) and `artifacts/` (model parameters, signal arrays). These folders are gitignored because they are regenerable; the committed snapshot of the final run is in `docs/results/`.
 
 ---
 
-## Running the Pipeline
+## Method
 
-### Gradient check (verify LSTM/GRU backprop)
+**Split (no leakage).** The MLP is warm-up trained offline on the first 10 % of the data only. The prequential (test-then-train) pass then runs over the remaining 90 % and produces confidence, entropy and error signals for the whole monitored stream. Windows built from that stream are split 60 / 20 / 20 by window centre with 40-sample gaps: **24,448 train / 8,116 validation / 8,097 test windows.** Features are scaled causally: row *t* is standardised with the mean/std of rows before *t* only (clipped at ±5σ).
 
-```bash
-python -m src.gradcheck
-```
+**Degradation label.** For a window ending at stream position *t*: `label = 1` if `mean(err[t:t+20]) - mean(err[t-20:t]) > 0.15`. The model input is `[confidence, entropy]` over `[t-20, t)`, strictly past data. Positive rate: 0.142 train, 0.190 validation, 0.125 test.
 
-Expected output:
-```
-[LSTM] max relative error: 0.000xxx  -> PASSED
-[GRU]  max relative error: 0.000xxx  -> PASSED
-```
+**Training.** Per-sample SGD, 8 epochs, lr 0.002 with decay, hidden size 32, half-strength class weighting, 3 seeds each. The epoch is chosen by validation PR-AUC and the decision threshold by validation F1. Hyperparameters (learning rate, class-weight strength, hidden size) were chosen on validation PR-AUC only; the test split was used once for reporting.
 
-### Full training + evaluation pipeline
-
-```bash
-python -m src.train
-```
-
-This runs all 10 steps (≈ 5–15 minutes depending on hardware):
-
-1. Load and preprocess Elec2 with chronological 60/20/20 split
-2. MLP warm-up training on training period
-3. Prequential evaluation — collects confidence, entropy, error signals
-4. ADWIN and DDM on the error stream
-5. Build sliding-window sequence datasets
-6. Compute class weights; tune thresholds on validation set
-7. Train LSTM and GRU (3 seeds each, class-weighted loss)
-8. Monitoring-signal ablation study
-9. Synthetic drift benchmark (ADWIN vs DDM, known change points)
-10. Save all artifacts, plots, and result tables
-
-**Outputs written to:**
-| Path | Contents |
-|------|----------|
-| `results/table_a_mlp_metrics.json` | MLP accuracy, F1, ROC-AUC, PR-AUC |
-| `results/table_b_forecasting.json` | LSTM/GRU/baselines forecasting metrics |
-| `results/table_c_drift_detection.json` | ADWIN/DDM detection metrics |
-| `results/ablation_results.json` | Ablation by monitoring-signal subset |
-| `results/experiment_metadata.json` | Full experiment config + split indices |
-| `reports/figures/` | All plots (see below) |
-| `artifacts/` | Model params (`.npz`), signal arrays (`.npy`) |
-
-### Generated plots
-
-| File | Description |
-|------|-------------|
-| `mlp_signals.png` | Rolling error, confidence, entropy over stream |
-| `signals_detectors.png` | Signals + ADWIN/DDM alarms + LSTM/GRU probs |
-| `degradation_probs.png` | LSTM & GRU P(future degradation) on test set |
-| `cm_lstm.png` / `cm_gru.png` | Confusion matrices |
-| `pr_lstm.png` / `pr_gru.png` | Precision-recall curves |
-| `model_comparison.png` | Bar chart: all models vs baselines |
-| `ablation.png` | Ablation: conf-only vs ent-only vs conf+ent |
-| `synthetic_drift.png` | Known change point vs ADWIN/DDM alarms |
+**Detection vs forecasting.** ADWIN/DDM react to the error stream; LSTM/GRU forecast from internal signals. Table B compares forecasting quality; Table D compares them on the same degradation events.
 
 ---
 
-## Running Tests
+## Results (test split, single final run)
 
-```bash
-python -m pytest tests/ -v
-```
+### Table A - MLP on the test stream
+accuracy 0.8928 · precision 0.8834 · recall 0.8839 · F1 0.8836 · ROC-AUC 0.9534 · PR-AUC 0.9444 (prequential accuracy over the whole monitored stream: 0.8677).
 
-**31 tests, all passing.** Covers:
-- Preprocessing: shapes, no-leakage scaler, label validity, split ordering
-- MLP: forward pass, probability validity, training convergence, stream runner
-- Sequence dataset: shapes, no future leakage in inputs, label logic, split no-overlap
-- RNN layers: LSTM/GRU forward, prediction range, loss finiteness, gradient checks, param serialisation
-- Drift detectors: detection on injected drift, false-alarm rate on stationary stream, metric calculations
-- Evaluate: threshold selection, metric edge cases, majority baseline
+### Table B - degradation forecasting (positive class; test positive rate 0.125)
 
----
+| Model | Precision | Recall | F1 | PR-AUC | Accuracy |
+|---|---|---|---|---|---|
+| Majority (never warn) | 0.000 | 0.000 | 0.000 | 0.125 | 0.875 |
+| Always warn | 0.125 | 1.000 | 0.222 | 0.125 | 0.125 |
+| Low past error rate * | 0.162 | 0.881 | 0.274 | 0.177 | 0.418 |
+| Rolling entropy | 0.082 | 0.228 | 0.121 | 0.093 | 0.586 |
+| Rolling low confidence | 0.076 | 0.228 | 0.114 | 0.090 | 0.556 |
+| Gradient boosting on window summaries (reference) | 0.245 | 0.445 | 0.316 | 0.250 | 0.760 |
+| **LSTM** (mean of 3 seeds) | 0.237 | 0.494 | 0.317 | 0.238 | 0.736 |
+| LSTM, high-precision point | 0.252 | 0.161 | 0.197 | 0.233 | 0.836 |
+| **GRU** (mean of 3 seeds) | 0.243 | 0.468 | 0.315 | 0.227 | 0.749 |
+| GRU, high-precision point | 0.244 | 0.165 | 0.197 | 0.216 | 0.832 |
 
-## Experimental Methodology
+LSTM across 3 seeds: F1 0.317 ± 0.013, precision 0.237 ± 0.010, PR-AUC 0.238 ± 0.004. GRU: F1 0.315 ± 0.013, precision 0.243 ± 0.013, PR-AUC 0.227 ± 0.008.
+`*` needs ground-truth labels of the recent past; the other rows use only the MLP's internal signals. The high-precision rows use the validation threshold with the best precision subject to recall >= 0.25.
 
-### Data splits (no leakage)
-- **Train** (0–60%): MLP warm-up; scaler fitted here only
-- **Gap** (40 samples): prevents sequence windows from straddling the boundary
-- **Validation** (60–80%): threshold tuning and model selection
-- **Gap** (40 samples)
-- **Test** (80–100%): final evaluation, never touched during tuning
+### Ablation (LSTM, 3 seeds)
 
-### Degradation label definition
+| Inputs | F1 | PR-AUC |
+|---|---|---|
+| Conf only | 0.298 ± 0.002 | 0.287 ± 0.010 |
+| Ent only | 0.287 ± 0.008 | 0.230 ± 0.040 |
+| Conf+Ent | 0.317 ± 0.013 | 0.238 ± 0.004 |
 
-For a window ending at stream position *t*:
+### Table D - early warning on severe-degradation events (test stream)
+Events are onsets where the next-20-step error rate exceeds the past-20-step rate by more than 0.30 (25 events, merged within 40 steps). An alarm counts as a hit if it falls in `[onset - 30, onset + 60]`. LSTM/GRU alarm when their output exceeds the 95th percentile of their own previous 2,000 outputs (causal). "Chance" is the expected recall of the same number of random alarms.
 
-```
-past_err(t)   = mean(errors[t - window_len : t])
-future_err(t) = mean(errors[t : t + horizon])
-label(t)      = 1  if  future_err(t) - past_err(t) > degradation_delta
-                0  otherwise
-```
+| Method | Alarms | Event recall | Chance | Warned before onset | Median offset (steps) | False alarms / 1000 |
+|---|---|---|---|---|---|---|
+| LSTM | 59 | 0.52 | 0.47 | 0.28 | -3 | 5.1 |
+| GRU | 58 | 0.52 | 0.47 | 0.20 | 2 | 5.2 |
+| ADWIN | 1 | 0.04 | 0.01 | 0.04 | -28 | 0.0 |
+| ADWIN(d=.05) | 10 | 0.24 | 0.10 | 0.04 | 38 | 0.5 |
+| DDM | 0 | 0.00 | 0.00 | 0.00 | n/a | 0.0 |
 
-Defaults: `window_len=20`, `horizon=20`, `degradation_delta=0.15`
-
-The model input is `[C_s, H_s]` for `s ∈ [t-window_len, t)` — **strictly past information**. Future error rates appear only in the label, never in model inputs.
-
-### Drift detection vs degradation forecasting
-These are **distinct tasks**:
-- ADWIN/DDM detect distributional changes in the **error stream** (reactive)
-- LSTM/GRU forecast **future degradation** from internal signals (proactive)
-
-Metrics are kept separate. Detection delay (ADWIN/DDM) and positive-class F1 (LSTM/GRU) measure different things and are not directly compared numerically.
+### Synthetic benchmark (known change point)
+ADWIN detected every change point with a delay of 47-111 steps and no false alarms; DDM detected them with a delay of 112-270 steps and raised one false alarm on a stationary stream (`results/table_c_drift_detection.json`).
 
 ---
 
-## Key Implementation Notes
+## Honest reading of the results
 
-- All three models (MLP, LSTM, GRU) are pure NumPy — no deep learning frameworks
-- LSTM uses bias initialisation of 1.0 for the forget gate (standard practice to help gradient flow early in training)
-- Class imbalance (~21% positive windows) is handled via `pos_weight = neg_rate / pos_rate` in the loss
-- Classification threshold is tuned on validation F1, not hardcoded at 0.5
-- Results on the real Elec2 stream are reported honestly — no fabricated ground-truth drift labels
+* **The first version of this project was invalid.** It left about 20 training windows for the forecasters (see the fix log below). With a proper training set, test F1 rose from 0.24 to 0.32, precision from 0.14 to 0.24 and accuracy from 0.42 to 0.74.
+* **The forecasters have real but modest skill.** PR-AUC is about 0.24 against a 0.125 base rate, and F1 is 0.32. LSTM and GRU are statistically indistinguishable, and a gradient-boosting model on window summaries performs about the same, so the benefit of the recurrent models is not demonstrated here.
+* **Precision can be traded for recall.** The high-precision operating point reaches precision 0.25 and accuracy 0.84, but recall drops to 0.16.
+* **Early warning is not demonstrated.** On severe-degradation events the forecasters hit 0.52 of events versus 0.47 for random alarms - within noise for 25 events. ADWIN/DDM rarely fire on the test stream, and when ADWIN (delta 0.05) does, it is late (median +38 steps).
+* **Label caveat.** Because the label is "future minus past" error, it partly measures mean reversion: a baseline that warns when the *past* error is low already reaches PR-AUC 0.177. A longer reference window or an absolute error-rate label would be a sensible next experiment.
+* Positive-rate shift (0.14 / 0.19 / 0.125) means thresholds tuned on validation transfer imperfectly to test.
 
 ---
 
-## Requirements
+## Label experiment: longer reference window
 
-```
-numpy
-pandas
-scikit-learn
-matplotlib
-river
-pytest          # for tests only
-```
+The label above compares the next 20 steps with the previous 20, so it partly
+rewards mean reversion. `make_windows(reference_len=R)` instead compares the
+next 20 steps with `mean(err[t-R:t])`; inputs and windows are unchanged.
 
-Python ≥ 3.9 required. Tested on Python 3.9.13.
+**Selection rule (fixed before running, validation only).** Score each R by
+`(AP_LSTM - AP_LowPastErr*) / positive rate` on the odd validation windows
+(the even ones are used for early stopping), 2 LSTM seeds. Keep R = 20 unless
+the best R beats it by more than the seed spread.
+
+| R | Val pos. rate | LSTM AP | LowPastErr* AP | GBM AP | Skill |
+|---|---|---|---|---|---|
+| 20 (original) | 0.188 | 0.401 ± 0.016 | 0.337 | 0.406 | 0.342 ± 0.083 |
+| **100** | 0.170 | 0.312 ± 0.007 | 0.235 | 0.329 | **0.454 ± 0.043** |
+| 500 | 0.161 | 0.260 ± 0.005 | 0.218 | 0.260 | 0.259 ± 0.032 |
+| 2000 | 0.165 | 0.218 ± 0.009 | 0.202 | 0.255 | 0.096 ± 0.057 |
+
+R = 100 was selected (gain +0.111 against a seed spread of 0.083, so only just).
+The full pipeline was then run **once** on test with R = 100
+(`docs/results/label_experiment/`):
+
+| Test split | R = 20 (main) | R = 100 |
+|---|---|---|
+| Positive rate | 0.125 | 0.124 |
+| LowPastErr* PR-AUC | 0.177 | 0.176 |
+| GBM-summary PR-AUC / F1 | 0.250 / 0.316 | 0.207 / 0.281 |
+| LSTM PR-AUC / F1 / precision | 0.238 / 0.317 / 0.237 | 0.233 / 0.303 / 0.221 |
+| GRU PR-AUC / F1 / precision | 0.227 / 0.315 / 0.243 | 0.193 / 0.269 / 0.212 |
+| LSTM skill `(AP - AP_LowPastErr*)/rate` | 0.49 | 0.46 |
+| Early warning, LSTM recall vs chance | 0.52 vs 0.47 (25 events) | 0.57 vs 0.45 (23 events) |
+| Early warning, GRU recall vs chance | 0.52 vs 0.47 | 0.52 vs 0.55 |
+
+**Result: the longer reference did not help on test.** On validation it weakened
+the mean-reversion baseline (LowPastErr* lift 1.79 -> 1.38), but on test that
+baseline is unchanged (PR-AUC 0.177 vs 0.176) and no model improved; GRU and
+GBM got worse. The validation gain did not transfer, which is consistent with
+it being only just above the seed noise. The main results above therefore stay
+on the original label (`reference_len=None`); the R = 100 run is reported as a
+negative result. Early warning is still not demonstrated with either label.
+
+---
+
+## Fix log (what changed from the first version)
+
+1. **Training-set bug.** The MLP was warmed up on 60 % of the stream, so monitoring signals existed only for the last 40 %, and the "train" window split contained about 20 windows. Now: 10 % warm-up, causal scaling, and the windows split 60/20/20 of the monitored stream.
+2. **Leaky baseline removed.** The old rolling-entropy baseline tuned its threshold on the test labels and used a centred window that sees future values. Replaced by validation-tuned baselines.
+3. **New baselines** (always-warn, past error, rolling entropy/confidence, gradient boosting) and PR-AUC for the trivial baselines.
+4. **Early-warning evaluation** against ADWIN/DDM with a random-alarm chance reference (`src/early_warning.py`).
+5. **Window-split boundaries** are explicit, so the label region of one split never overlaps the next split's inputs.
+6. Early stopping on validation PR-AUC, input standardisation, class-weight strength and learning rate chosen on validation.
+7. Removed the broken `src/report.py` (imported functions that did not exist) and rewrote it; deleted `temp_train_output.txt`.
+8. Tests: 31 -> 44, including regression tests for the training-set size, causal scaling and split independence.
+9. Optional `reference_len` for the degradation label, `--reference-len` CLI flag, validation-only label experiment (`src/label_experiment.py`), 2 more tests (46).
+
+Requirements: Python >= 3.9; `numpy pandas scikit-learn matplotlib river pytest`.

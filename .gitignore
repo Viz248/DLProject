@@ -20,10 +20,10 @@ htmlcov/
 data/electricity.csv
 
 # Generated outputs — reproducible from pipeline
-artifacts/
-results/
-reports/figures/
-outputs/
+/artifacts/
+/results/
+/reports/figures/
+/outputs/
 
 # IDE
 .vscode/
@@ -33,3 +33,6 @@ outputs/
 # OS
 .DS_Store
 Thumbs.db
+
+# resume cache
+artifacts/cache/

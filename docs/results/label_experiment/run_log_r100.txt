@@ -1,0 +1,119 @@
+
+==================================================================
+STEP 1 - Load Elec2, warm-up slice + causal scaling
+==================================================================
+  Total samples   : 45312
+  MLP warm-up     : 0-4531  (4531 samples, scaler = causal expanding)
+  Window train    : 4531-28999
+  Window val      : 29039-37155
+  Window test     : 37195-45312
+  Label balance   : UP=0.425  DOWN=0.575
+
+==================================================================
+STEP 2 - MLP warm-up on the warm-up slice only
+==================================================================
+  Warm-up training complete.
+
+==================================================================
+STEP 3 - Prequential evaluation over the monitored stream
+==================================================================
+  Monitored stream length   : 40781
+  Overall streaming accuracy: 0.8677
+
+=== TABLE A — Baseline MLP Classification ===
+Metric            Value
+  accuracy       0.8928
+  precision      0.8834
+  recall         0.8839
+  f1             0.8836
+  roc_auc        0.9534
+  pr_auc         0.9444
+
+==================================================================
+STEP 4 - ADWIN and DDM on the error stream
+==================================================================
+  ADWIN alarms: 10   DDM alarms: 21   ADWIN(delta=0.05): 37
+
+==================================================================
+STEP 5 - Sliding-window datasets
+==================================================================
+  All windows   : 40741  pos=0.134
+  Train windows : 24448  pos=0.125
+  Val windows   : 8116  pos=0.170
+  Test windows  : 8097  pos=0.124
+
+==================================================================
+STEP 6 - Baselines and class weight
+==================================================================
+  Train positive rate: 0.125  pos_weight=2.65
+
+==================================================================
+STEP 7 - Train LSTM and GRU
+==================================================================
+  Training on 8150 windows (stride 3), 8 epochs, 3 seeds
+
+  [LSTM]
+    seed=0 ep*=1 thr=0.23  F1=0.297 P=0.211 R=0.502 Acc=0.705 PR-AUC=0.223 (val AP 0.300)  166s
+    seed=1 ep*=2 thr=0.16  F1=0.310 P=0.237 R=0.447 Acc=0.753 PR-AUC=0.229 (val AP 0.321)  213s
+    seed=2 ep*=2 thr=0.23  F1=0.303 P=0.215 R=0.518 Acc=0.705 PR-AUC=0.245 (val AP 0.295)  210s
+
+  [GRU]
+    seed=0 ep*=4 thr=0.22  F1=0.270 P=0.217 R=0.357 Acc=0.761 PR-AUC=0.189 (val AP 0.336)  83s
+    seed=1 ep*=3 thr=0.29  F1=0.281 P=0.208 R=0.432 Acc=0.726 PR-AUC=0.193 (val AP 0.311)  83s
+    seed=2 ep*=4 thr=0.25  F1=0.255 P=0.211 R=0.321 Acc=0.768 PR-AUC=0.197 (val AP 0.327)  83s
+
+=== TABLE B — Degradation Forecasting ===
+Model             Prec     Rec      F1   PR-AUC     Acc    Thr    Prev
+  Majority       0.000   0.000   0.000    0.124   0.876majority   0.124
+  AlwaysWarn     0.124   1.000   0.220    0.124   0.124 always   0.124
+  LowPastErr*    0.134   0.961   0.235    0.176   0.226  -0.18   0.124
+  RollEnt        0.069   0.193   0.102    0.088   0.578   0.37   0.124
+  RollLowConf    0.068   0.205   0.102    0.087   0.551  -0.84   0.124
+  GBM-summary    0.198   0.482   0.281    0.207   0.695   0.48   0.124
+  LSTM           0.221   0.489   0.303    0.233   0.721   0.16   0.124
+  LSTM-hiPrec    0.271   0.267   0.269    0.229   0.820   0.19   0.124
+  GRU            0.212   0.370   0.269    0.193   0.751   0.22   0.124
+  GRU-hiPrec     0.202   0.221   0.211    0.189   0.795   0.24   0.124
+
+==================================================================
+STEP 8 - Monitoring-signal ablation (LSTM)
+==================================================================
+  [Conf only] F1=0.291 +-0.011   PR-AUC=0.262 +-0.010
+  [Ent only ] F1=0.282 +-0.007   PR-AUC=0.246 +-0.027
+  [Conf+Ent ] F1=0.303 +-0.005   PR-AUC=0.233 +-0.009
+
+==================================================================
+STEP 9 - Early warning: forecasters vs ADWIN / DDM (test stream)
+==================================================================
+  Events in test stream: 23   forecaster alarm rule: P >= 0.95-quantile of own past 2000 outputs
+
+=== TABLE D - Early warning vs reactive detectors (test stream) ===
+Method           Alarms Events  Recall  Chance  Early  MedOff  AlPrec  FA/1000
+  LSTM               54     23   0.565   0.453  0.217       5   0.315      4.6
+  GRU                72     23   0.522   0.547  0.304      -6   0.222      6.9
+  ADWIN               1     23   0.000   0.012  0.000     N/A   0.000      0.1
+  ADWIN(d=.05)       10     23   0.348   0.106  0.087      36   0.800      0.2
+  DDM                 0     23   0.000   0.000  0.000     N/A     nan      0.0
+
+==================================================================
+STEP 10 - Synthetic drift benchmark (ADWIN vs DDM)
+==================================================================
+
+=== TABLE C — Drift Detection (Synthetic Streams) ===
+Detector    Alarms  Detected  Missed    FA  MeanDelay  DetRate  FARate
+  ADWIN_seed42       1         1       0     0      111.0    1.000   0.000
+  DDM_seed42       2         1       0     1      270.0    1.000   0.500
+  ADWIN_seed7       1         1       0     0       47.0    1.000   0.000
+  DDM_seed7       1         1       0     0      200.0    1.000   0.000
+  ADWIN_seed99       1         1       0     0       79.0    1.000   0.000
+  DDM_seed99       1         1       0     0      112.0    1.000   0.000
+  ADWIN_nochange_seed42       0         0       0     0        N/A      nan   0.000
+  DDM_nochange_seed42       1         0       0     1        N/A      nan   1.000
+  ADWIN_nochange_seed7       0         0       0     0        N/A      nan   0.000
+  DDM_nochange_seed7       0         0       0     0        N/A      nan   0.000
+
+==================================================================
+STEP 11 - Save metadata and artifacts
+==================================================================
+  Done in 1646s
+  Artifacts -> artifacts/   Results -> results/   Figures -> reports/figures/

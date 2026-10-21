@@ -1,0 +1,67 @@
+{
+  "selection_rule": "max mean (AP_LSTM - AP_LowPastErr)/val_pos_rate on odd val windows; keep R=20 unless gain > seed std",
+  "seeds": 2,
+  "epochs": 8,
+  "variants": {
+    "20": {
+      "reference_len": 20,
+      "train_pos_rate": 0.1421384162303665,
+      "val_pos_rate": 0.1882700837851158,
+      "ap_lstm": 0.4012521820531936,
+      "ap_lstm_std": 0.015542851660376611,
+      "ap_low_past_err": 0.3367806664874138,
+      "ap_gbm": 0.40642898373289116,
+      "lift_lstm": 2.131258317764214,
+      "lift_low_past_err": 1.788816681421368,
+      "lift_gbm": 2.158754994748786,
+      "skill": 0.3424416363428461,
+      "skill_std": 0.08255614141074386
+    },
+    "100": {
+      "reference_len": 100,
+      "train_pos_rate": 0.12483638743455497,
+      "val_pos_rate": 0.17003449975357318,
+      "ap_lstm": 0.3123651551296722,
+      "ap_lstm_std": 0.007336273449512404,
+      "ap_low_past_err": 0.23523986466780253,
+      "ap_gbm": 0.32899097320856024,
+      "lift_lstm": 1.8370692746611739,
+      "lift_low_past_err": 1.3834831461187576,
+      "lift_gbm": 1.9348483612758516,
+      "skill": 0.4535861285424161,
+      "skill_std": 0.04314579370742225
+    },
+    "500": {
+      "reference_len": 500,
+      "train_pos_rate": 0.11861910994764398,
+      "val_pos_rate": 0.161409561360276,
+      "ap_lstm": 0.26031540527005387,
+      "ap_lstm_std": 0.005183082293315933,
+      "ap_low_past_err": 0.2184674554487984,
+      "ap_gbm": 0.25957241978512974,
+      "lift_lstm": 1.612763228375387,
+      "lift_low_past_err": 1.3534976094827844,
+      "lift_gbm": 1.6081601213558112,
+      "skill": 0.25926561889260263,
+      "skill_std": 0.03211137091034512
+    },
+    "2000": {
+      "reference_len": 2000,
+      "train_pos_rate": 0.12422284031413612,
+      "val_pos_rate": 0.16510596352883194,
+      "ap_lstm": 0.21835791566996887,
+      "ap_lstm_std": 0.009407066071493997,
+      "ap_low_past_err": 0.20245028200103904,
+      "ap_gbm": 0.2554101150795761,
+      "lift_lstm": 1.3225319728190055,
+      "lift_low_past_err": 1.2261839468062932,
+      "lift_gbm": 1.5469466373028655,
+      "skill": 0.09634802601271233,
+      "skill_std": 0.05697593151958603
+    }
+  },
+  "best_by_skill": 100,
+  "gain_over_20": 0.11114449219957001,
+  "noise": 0.08255614141074386,
+  "chosen_reference_len": 100
+}

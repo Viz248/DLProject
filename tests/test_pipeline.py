@@ -164,6 +164,30 @@ class TestSequenceDataset:
             conf, ent, err, window_len=20, horizon=20, degradation_delta=0.15)
         assert y.sum() > 0, "Expected at least one positive label near degradation burst"
 
+    def test_reference_len_default_is_original_label(self):
+        from src.sequence_dataset import make_windows
+        conf, ent, err = self._synthetic()
+        a = make_windows(conf, ent, err, 20, 20, 0.15)
+        b = make_windows(conf, ent, err, 20, 20, 0.15, reference_len=20)
+        for u, v in zip(a, b):
+            np.testing.assert_array_equal(u, v)
+
+    def test_reference_len_label(self):
+        """Label = future rate minus mean(err[t-R:t]); inputs are unchanged."""
+        from src.sequence_dataset import make_windows
+        conf, ent, err = self._synthetic()
+        R = 100
+        X0, _, c0, _, _ = make_windows(conf, ent, err, 20, 20, 0.15)
+        X, y, c, pe, fe = make_windows(conf, ent, err, 20, 20, 0.15,
+                                       reference_len=R)
+        np.testing.assert_array_equal(X, X0)
+        np.testing.assert_array_equal(c, c0)
+        for i, t in enumerate(c):
+            ref = err[max(0, t - R):t].mean()
+            assert pe[i] == pytest.approx(ref)
+            assert fe[i] == pytest.approx(err[t:t + 20].mean())
+            assert y[i] == int(fe[i] - ref > 0.15)
+
     def test_split_windows_no_overlap(self):
         from src.sequence_dataset import make_windows, split_windows
         conf, ent, err = self._synthetic()
@@ -326,3 +350,127 @@ class TestEvaluate:
         m    = mlp_metrics(y, pred, prob)
         assert m["accuracy"] == pytest.approx(1.0)
         assert m["f1"]       == pytest.approx(1.0)
+
+
+# ------------------------------------------------------------------ #
+#  Fix-log regression tests (online split, causal scaling, no leakage) #
+# ------------------------------------------------------------------ #
+class TestOnlineStream:
+    def test_split_ordering_and_warmup(self):
+        from src.preprocessing import build_online_stream
+        X, y, si, info = build_online_stream("data/electricity.csv")
+        assert 0 < si["warmup_end"] < si["train_end"] < si["val_start"]
+        assert si["val_start"] < si["val_end"] < si["test_start"] < si["n"]
+        assert si["warmup_end"] <= 0.15 * si["n"]          # short warm-up
+        assert X.shape == (45312, 8) and np.isfinite(X).all()
+
+    def test_scaling_is_causal(self):
+        """Changing FUTURE rows must not change already-scaled rows."""
+        from src.preprocessing import causal_standardize
+        rng = np.random.default_rng(0)
+        A = rng.normal(size=(500, 3))
+        B = A.copy()
+        B[300:] += 50.0                       # corrupt the future
+        ZA = causal_standardize(A, warmup_end=100)
+        ZB = causal_standardize(B, warmup_end=100)
+        np.testing.assert_allclose(ZA[:300], ZB[:300])
+
+    def test_scaling_clipped(self):
+        from src.preprocessing import causal_standardize
+        A = np.ones((400, 2)); A[300:, 0] = 1e6
+        Z = causal_standardize(A, warmup_end=100, clip=5.0)
+        assert np.abs(Z).max() <= 5.0
+
+    def test_training_window_set_is_large(self):
+        """Regression: the old split produced ~20 training windows."""
+        from src.preprocessing import build_online_stream
+        from src.sequence_dataset import make_windows, split_windows
+        X, y, si, _ = build_online_stream("data/electricity.csv")
+        ws, n = si["warmup_end"], si["n"]
+        rng = np.random.default_rng(0)
+        m = n - ws
+        conf, ent = rng.uniform(0.5, 1, m), rng.uniform(0, 0.7, m)
+        err = rng.binomial(1, 0.13, m)
+        Xw, yw, c, pe, fe = make_windows(conf, ent, err, 20, 20, 0.15)
+        (Xtr, *_), (Xv, *_), (Xte, *_) = split_windows(
+            Xw, yw, c + ws, pe, fe, si["val_start"], si["test_start"],
+            si["train_end"], si["val_end"])
+        assert len(Xtr) > 10_000
+        assert len(Xv) > 3_000 and len(Xte) > 3_000
+        assert len(Xtr) > 2 * len(Xv)          # train is the biggest split
+
+    def test_window_splits_are_independent(self):
+        """Label region of one split must not overlap the next split's input."""
+        from src.sequence_dataset import make_windows, split_windows
+        rng = np.random.default_rng(1)
+        n = 3000
+        X, y, c, pe, fe = make_windows(rng.uniform(.5, 1, n), rng.uniform(0, .7, n),
+                                       rng.binomial(1, .1, n), 20, 20, 0.15)
+        tr, va, te = split_windows(X, y, c, pe, fe, val_start_abs=1840,
+                                   test_start_abs=2480, train_end_abs=1800,
+                                   val_end_abs=2440)
+        W = H = 20
+        assert tr[2].max() + H <= va[2].min() - W
+        assert va[2].max() + H <= te[2].min() - W
+
+
+class TestEarlyWarning:
+    def test_onsets_merge_runs(self):
+        from src.early_warning import degradation_onsets
+        centers = np.arange(100)
+        labels = np.zeros(100, int)
+        labels[10:15] = 1; labels[20:22] = 1; labels[70:75] = 1
+        on = degradation_onsets(labels, centers, merge_gap=20)
+        assert list(on) == [10, 70]            # 10-14 and 20-21 merged
+
+    def test_alarm_refractory(self):
+        from src.early_warning import alarms_from_flags
+        flags = np.zeros(100, bool); flags[[10, 12, 15, 60]] = True
+        assert list(alarms_from_flags(flags, 0, refractory=20)) == [10, 60]
+
+    def test_evaluate_alarms_early_hit_and_false_alarm(self):
+        from src.early_warning import evaluate_alarms
+        r = evaluate_alarms(np.array([100, 500]), np.array([90, 300]),
+                            span=1000, lead_max=30, tol=60)
+        assert r["n_hits"] == 1 and r["early_rate"] == 0.5
+        assert r["median_offset"] == -10 and r["false_alarms"] == 1
+
+    def test_adaptive_alarms_are_causal(self):
+        from src.early_warning import alarms_from_probs_adaptive
+        rng = np.random.default_rng(0)
+        p = rng.uniform(size=1500); c = np.arange(1500)
+        q = p.copy(); q[1200:] = 1.0           # change the future only
+        a = alarms_from_probs_adaptive(p, c, 0.95, 500, 100, 10)
+        b = alarms_from_probs_adaptive(q, c, 0.95, 500, 100, 10)
+        assert list(a[a < 1200]) == list(b[b < 1200])
+
+    def test_chance_reference_in_unit_interval(self):
+        from src.early_warning import chance_reference
+        r = chance_reference(np.array([100, 400, 700]), 5, 0, 1000, 30, 60,
+                             n_draws=50)
+        assert 0.0 <= r["chance_event_recall"] <= 1.0
+
+
+class TestBaselinesNoLeakage:
+    def test_score_baseline_threshold_uses_validation_only(self):
+        from src.evaluate import score_baseline_metrics
+        rng = np.random.default_rng(0)
+        s_val = rng.normal(size=500); y_val = (s_val > 1).astype(int)
+        s_te = rng.normal(size=500);  y_a = (s_te > 1).astype(int)
+        y_b = rng.integers(0, 2, 500)           # different test labels
+        ra = score_baseline_metrics(s_val, y_val, s_te, y_a)
+        rb = score_baseline_metrics(s_val, y_val, s_te, y_b)
+        assert ra["threshold"] == rb["threshold"]
+
+    def test_always_positive_and_majority(self):
+        from src.evaluate import always_positive_metrics, majority_class_metrics
+        y = np.array([0] * 80 + [1] * 20)
+        assert always_positive_metrics(y)["precision_pos"] == pytest.approx(0.2)
+        assert majority_class_metrics(y)["pr_auc"] == pytest.approx(0.2)
+
+    def test_high_precision_threshold_in_range(self):
+        from src.evaluate import select_threshold_precision
+        rng = np.random.default_rng(1)
+        y = rng.integers(0, 2, 400); p = np.clip(y * 0.3 + rng.uniform(size=400) * .7, 0, 1)
+        t = select_threshold_precision(y, p, min_recall=0.25)
+        assert 0.0 <= t <= 1.0

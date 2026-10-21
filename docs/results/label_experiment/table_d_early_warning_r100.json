@@ -1,0 +1,67 @@
+{
+  "LSTM": {
+    "n_events": 23,
+    "n_alarms": 54,
+    "n_hits": 13,
+    "event_recall": 0.5652173913043478,
+    "early_rate": 0.21739130434782608,
+    "median_offset": 5.0,
+    "alarm_precision": 0.3148148148148148,
+    "false_alarms": 37,
+    "false_alarms_per_1000": 4.558334359985216,
+    "chance_event_recall": 0.4533333333333333,
+    "chance_alarm_precision": 0.2526543209876543
+  },
+  "GRU": {
+    "n_events": 23,
+    "n_alarms": 72,
+    "n_hits": 12,
+    "event_recall": 0.5217391304347826,
+    "early_rate": 0.30434782608695654,
+    "median_offset": -5.5,
+    "alarm_precision": 0.2222222222222222,
+    "false_alarms": 56,
+    "false_alarms_per_1000": 6.899100652950597,
+    "chance_event_recall": 0.5465217391304348,
+    "chance_alarm_precision": 0.25236111111111115
+  },
+  "ADWIN": {
+    "n_events": 23,
+    "n_alarms": 1,
+    "n_hits": 0,
+    "event_recall": 0.0,
+    "early_rate": 0.0,
+    "median_offset": null,
+    "alarm_precision": 0.0,
+    "false_alarms": 1,
+    "false_alarms_per_1000": 0.12319822594554639,
+    "chance_event_recall": 0.01217391304347826,
+    "chance_alarm_precision": 0.28
+  },
+  "ADWIN(d=.05)": {
+    "n_events": 23,
+    "n_alarms": 10,
+    "n_hits": 8,
+    "event_recall": 0.34782608695652173,
+    "early_rate": 0.08695652173913043,
+    "median_offset": 36.5,
+    "alarm_precision": 0.8,
+    "false_alarms": 2,
+    "false_alarms_per_1000": 0.24639645189109277,
+    "chance_event_recall": 0.1055072463768116,
+    "chance_alarm_precision": 0.25666666666666665
+  },
+  "DDM": {
+    "n_events": 23,
+    "n_alarms": 0,
+    "n_hits": 0,
+    "event_recall": 0.0,
+    "early_rate": 0.0,
+    "median_offset": null,
+    "alarm_precision": NaN,
+    "false_alarms": 0,
+    "false_alarms_per_1000": 0.0,
+    "chance_event_recall": 0.0,
+    "chance_alarm_precision": NaN
+  }
+}

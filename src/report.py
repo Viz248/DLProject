@@ -1,56 +1,38 @@
-"""Generate the final outputs from saved artifacts without retraining.
+"""
+Print the final result tables from saved JSON (no retraining).
 
 Usage:
     python -m src.report
 """
-
-import pickle
+import json
+import os
 import sys
-from pathlib import Path
 
-import numpy as np
-
-if __package__ in (None, ""):
-    project_root = Path(__file__).resolve().parents[1]
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-
-from src.evaluate import plot_signal_and_alarms, print_final_comparison_table
+RES_DIR = "results"
 
 
-ARTIFACT_PATH = Path("outputs/pipeline_artifacts.pkl")
-
-
-def load_artifacts(path: str | Path = ARTIFACT_PATH):
-    with Path(path).open("rb") as f:
-        artifact = pickle.load(f)
-    return artifact
+def _load(name):
+    path = os.path.join(RES_DIR, name)
+    if not os.path.exists(path):
+        sys.exit(f"Missing {path} - run `python -m src.train` first.")
+    with open(path) as f:
+        return json.load(f)
 
 
 def main():
-    artifact = load_artifacts()
-
-    results = artifact["results"]
-    drift_summary = artifact["drift_summary"]
-    confs = artifact["confs"]
-    ents = artifact["ents"]
-    errors = artifact["errors"]
-    adwin_flags = artifact["adwin_flags"]
-    ddm_flags = artifact["ddm_flags"]
-    centers_test = artifact["centers_test"]
-    forecasts = artifact["forecasts"]
-    proxy_drift_index = artifact["proxy_drift_index"]
-
-    print_final_comparison_table(results, drift_summary)
-
-    out_path = plot_signal_and_alarms(
-        confs, ents, errors, adwin_flags, ddm_flags,
-        lstm_prob=forecasts["lstm"], lstm_centers=centers_test,
-        gru_prob=forecasts["gru"], gru_centers=centers_test,
-        true_drift_index=proxy_drift_index,
-        out_path="outputs/signals.png",
-    )
-    print(f"Saved plot to {out_path}")
+    from src.evaluate import print_table_a, print_table_b, print_table_d
+    meta = _load("experiment_metadata.json")
+    print(f"Windows: train={meta['n_train_windows']}  val={meta['n_val_windows']}  "
+          f"test={meta['n_test_windows']}   positive rate "
+          f"train/val/test = {meta['pos_rate']['train']:.3f}/"
+          f"{meta['pos_rate']['val']:.3f}/{meta['pos_rate']['test']:.3f}")
+    print_table_a(_load("table_a_mlp_metrics.json"))
+    print_table_b(_load("table_b_forecasting.json"))
+    print("\n=== Ablation (LSTM) ===")
+    for k, v in _load("ablation_results.json").items():
+        print(f"  {k:<10} F1={v['f1_pos']:.3f} +-{v['f1_std']:.3f}  "
+              f"PR-AUC={v['pr_auc']:.3f} +-{v['pr_std']:.3f}")
+    print_table_d(_load("table_d_early_warning.json"))
 
 
 if __name__ == "__main__":
