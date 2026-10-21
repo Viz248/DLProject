@@ -28,6 +28,8 @@ docs/results/               snapshot of the results and figures from the final r
 docs/results/label_experiment/  label experiment (validation table + the R=100 test run)
 ```
 
+**Novelty extension:** see [README_NOVELTY.md](README_NOVELTY.md) (RiskGate-CUSUM, forecast-gated sequential change detection).
+
 ## Setup and running
 
 ```bash
