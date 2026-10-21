@@ -37,7 +37,7 @@ before claiming it is new in a report or patent.
 ## Run
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -q                       # 70 tests
+python -m pytest tests/ -q                       # 74 tests
 python -m src.novelty_experiment --quick         # ~30 s smoke run
 python -m src.novelty_experiment --seeds 1       # ~4-8 min, one forecaster seed
 python -m src.novelty_experiment                 # 3 forecaster seeds (slow on one core)

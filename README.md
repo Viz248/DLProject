@@ -51,13 +51,13 @@ Outputs go to `results/` (JSON tables), `reports/figures/` (plots) and `artifact
 ## Demo: drift / no drift / uncertain
 
 ```bash
-python -m src.demo                                    # all 9 scenarios, ~2 min (needs a finished src.train run)
+python -m src.demo                                    # all 9 scenarios, ~2-4 min (needs a finished src.train run)
 python -m src.demo --scenario sudden --severity 0.25  # one scenario in the terminal
 ```
 
 Then open `demo/index.html` in a browser (it reads `demo/demo_data.js`, which is committed, so the dashboard works without rerunning).
 
-The demo replays the real system on the Elec2 test stream. At test step 4,000 it injects drift of a known type and size; the MLP keeps predicting and learning online, ADWIN and DDM watch its errors, and the trained LSTM reads its confidence/entropy. The 2,000 steps before the injection are compared with the 2,000 after:
+The demo replays the real system on the Elec2 test stream. At test step 4,000 it injects drift of a known type and size; the MLP keeps predicting and learning online, and five methods watch it: the existing ADWIN, DDM and plain CUSUM, and our RiskGate-CUSUM and LSTM forecaster (CUSUM and RiskGate use the settings tuned on validation in `src/novelty_experiment.py`; the first demo run trains and caches the seed-0 GRU that RiskGate was tuned with). The 2,000 steps before the injection are compared with the 2,000 after:
 
 * **Scenarios:** no drift (real stream); sudden and gradual concept drift (the up/down rule reverses during 10 / 25 / 50 % of the day's half-hour slots); feature shift (price inputs +1 / +2.5 standard deviations, labels unchanged).
 * **DRIFT** - the error rate rose significantly (moving-block bootstrap 95 % CI above 0), by at least 5 percentage points, and ADWIN or DDM fired. Severity: mild < 10 pp, moderate 10-20 pp, severe > 20 pp.
@@ -66,6 +66,8 @@ The demo replays the real system on the Elec2 test stream. At test step 4,000 it
 * The output reports accuracy before -> after (pp and relative), the error-rate change with its CI, the worst 200-step error rate, each detector's delay, and the label-free signals.
 
 What the demo shows: every injected concept drift is called DRIFT, with accuracy drops that grow with the injected size, and ADWIN reacts faster than DDM in every case but the weakest gradual drift (where they tie within 10 steps). The feature shifts come out UNCERTAIN (small accuracy cost, detectors mostly quiet). The real stream comes out NO DRIFT. The LSTM's alarm rate does **not** rise under injected drift, which matches the main finding that the forecaster gives no early warning; the MLP's confidence does drop under strong concept drift.
+
+CUSUM and RiskGate also fire on the undrifted stream (5 alarms in the 2,000 steps before the injection), because they were tuned to catch short error spikes; only ADWIN and DDM, which test for a sustained change, confirm drift in the verdict. Under concept drift their alarm count rises from 5 to 6-19 (to 8 with no drift), and for strong sudden drift they fire first (50 %: RiskGate +5 steps, CUSUM +7, ADWIN +63, DDM +92). RiskGate and plain CUSUM behave almost identically, in line with the small effect reported in [README_NOVELTY.md](README_NOVELTY.md).
 
 ---
 

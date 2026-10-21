@@ -140,13 +140,52 @@ R = 100 was selected, though its gain (+0.111) only just exceeds the seed spread
 
 **This is a negative result.** On validation the longer reference weakened the mean-reversion baseline, with its lift falling from 1.79 to 1.38. On test that baseline is unchanged, and no model improved; the GRU and gradient-boosting models got worse. The validation gain did not transfer, which is consistent with it being only marginally above seed noise. The main results therefore use the original label.
 
+### 3.7 Our detector: RiskGate-CUSUM
+
+The forecasters alone fire too often (Section 3.4), and the error-based tests are reliable but late. **RiskGate-CUSUM** (`src/riskgate.py`, details in `README_NOVELTY.md`) combines them inside one sequential test. A one-sided CUSUM runs on the MLP's error stream, and the GRU forecaster's risk, converted to a causal percentile rank `u_t`, changes it in two ways:
+
+```
+S_t = max(0, S_(t-1) + (e_t - mu_t - k) + gamma * max(0, u_t - u0))    evidence injection
+alarm when S_t > h_t,   h_t = h0 * (1 - beta * u_t)                    threshold gating
+```
+
+With `beta = gamma = 0` it is the plain CUSUM, which is the existing baseline it is compared with. Each variant was tuned on the validation stream (event F1 with at most 6 alarms per 1,000 steps) and evaluated once on the 25 test events of Table D, with one forecaster seed:
+
+| Method | Alarms | Event recall | Alarm precision | Event F1 | Median offset | False alarms / 1000 |
+|---|---|---|---|---|---|---|
+| CUSUM (plain) | 26 | 0.80 | 0.88 | 0.840 | +21 | 0.4 |
+| **RiskGate-CUSUM** | 25 | 0.80 | 0.96 | **0.873** | +19 | 0.1 |
+| Forecaster only | 63 | 0.60 | 0.30 | 0.401 | −6 | 5.4 |
+| Naive OR (CUSUM + forecaster) | 83 | 0.84 | 0.46 | 0.593 | +7 | 5.6 |
+| ADWIN (δ = 0.05) | 10 | 0.24 | 0.60 | 0.343 | +38 | 0.5 |
+
+RiskGate has the best event F1, through fewer false alarms. The difference from plain CUSUM is about one alarm, from one seed and 25 events, so it is **not statistically meaningful**. It does not warn earlier: every CUSUM variant fires about 20 steps after onset. Fusing inside the test is clearly better than simply OR-ing the two alarm streams. ADWIN and DDM were not tuned on validation, so this table favours the CUSUM family.
+
+### 3.8 Demo: injected drift with a known answer
+
+`src/demo.py` replays the whole system on the test stream and injects drift of a known type and size at test step 4,000. The scenarios are sudden or gradual concept drift (the up/down rule reverses during 10, 25 or 50% of the day's half-hour slots) and a feature shift (price inputs +1 or +2.5 standard deviations). It then compares the 2,000 steps before and after. The verdict is **Drift** when the error rate rose significantly, by at least 5 percentage points, and ADWIN or DDM confirmed it; **No drift** when there was no significant rise, an estimate under 5 pp, and no alarm; and **Uncertain** otherwise.
+
+| Scenario | Verdict | Accuracy | ADWIN / DDM delay | CUSUM / RiskGate alarms (before → after) |
+|---|---|---|---|---|
+| No drift (real stream) | No drift | 90.6% → 88.5% | none | 5 → 8 / 5 → 8 |
+| Sudden, 10% | Drift (mild) | 90.6% → 83.5% | +255 / +761 | 5 → 7 / 5 → 6 |
+| Sudden, 25% | Drift (moderate) | 90.6% → 79.2% | +95 / +250 | 5 → 14 / 5 → 14 |
+| Sudden, 50% | Drift (moderate) | 90.6% → 72.2% | +63 / +92 | 5 → 17 / 5 → 18 |
+| Gradual, 10% | Drift (mild) | 90.6% → 85.1% | +1,151 / +1,141 | 5 → 8 / 5 → 9 |
+| Gradual, 25% | Drift (mild) | 90.6% → 82.0% | +255 / +859 | 5 → 8 / 5 → 10 |
+| Gradual, 50% | Drift (moderate) | 90.6% → 76.4% | +255 / +570 | 5 → 19 / 5 → 17 |
+| Feature shift, +1σ | Uncertain | 90.6% → 87.1% | none | 5 → 6 / 5 → 9 |
+| Feature shift, +2.5σ | Uncertain | 90.6% → 86.2% | none / +1,561 | 5 → 4 / 5 → 5 |
+
+Every injected concept drift is detected, and the accuracy loss grows with its size. ADWIN is faster than DDM except in the weakest gradual case. On strong sudden drift the CUSUM family fires first (50%: RiskGate +5 steps, CUSUM +7), but it also fires on natural error spikes, so it complements ADWIN/DDM rather than replacing them. The LSTM forecaster's alarm rate does not rise under drift, while the MLP's confidence does drop (from 0.865 to 0.735 at 50% sudden drift).
+
 ## 4. Discussion
 
 **What the evidence supports.** A deployed classifier's confidence and entropy carry some information about whether its error rate is about to rise, about twice chance precision. This information is in the short-term dynamics of the signals, not their level.
 
 **What it does not support.**
 1. *Deep sequence models are not shown to be needed.* A shallow tree ensemble on nine window summaries matches the LSTM and GRU.
-2. *Early warning ahead of ADWIN/DDM is not shown.* At the event level the forecasters are indistinguishable from random alarms at the same rate. ADWIN/DDM are not a strong comparison here either, because they almost never fire on Elec2's short degradation episodes.
+2. *Early warning ahead of ADWIN/DDM is not shown.* At the event level the forecasters are indistinguishable from random alarms at the same rate. ADWIN/DDM are not a strong comparison here either, because they almost never fire on Elec2's short degradation episodes. Using the forecaster inside a CUSUM (RiskGate) makes its signal useful for precision, not for earlier alarms.
 3. *The label partly measures mean reversion.* A label-based heuristic gets part of the way, and a longer reference window, chosen properly on validation, did not fix this on test.
 
 **Limitations.**
@@ -165,18 +204,20 @@ R = 100 was selected, though its gain (+0.111) only just exceeds the seed spread
 
 ## 5. Conclusion
 
-With a correctly split training set and leakage-free baselines, LSTM and GRU forecasters reading the MLP's confidence and entropy predict short-horizon degradation at about twice chance precision (PR-AUC 0.24, F1 0.32). They do no better than a gradient-boosting reference, and they do not provide earlier warning than random alarms at the event level. A validation-chosen change to the label did not improve this. The honest answer to the research question on Elec2 is: **some signal, no demonstrated early-warning advantage.**
+With a correctly split training set and leakage-free baselines, LSTM and GRU forecasters reading the MLP's confidence and entropy predict short-horizon degradation at about twice chance precision (PR-AUC 0.24, F1 0.32). They do no better than a gradient-boosting reference, and they do not provide earlier warning than random alarms at the event level. A validation-chosen change to the label did not improve this. Our RiskGate-CUSUM, which feeds the forecaster's risk into a CUSUM test, gives the best event-level F1 (0.87 vs 0.84 for plain CUSUM), but the margin is about one alarm and not statistically meaningful. In the controlled demo, every injected concept drift is detected and its size is measured correctly. The honest answer to the research question on Elec2 is: **some signal, no demonstrated early-warning advantage.**
 
 ## Reproducibility
 
 ```bash
 pip install -r requirements.txt
-python -m pytest tests/ -v                 # 46 tests
+python -m pytest tests/ -v                 # 74 tests
 python -m src.gradcheck                    # LSTM/GRU gradient check
 python -m src.train                        # main results (R = 20), ~11-25 min
 python -m src.label_experiment             # label experiment, validation only, ~20 min
 python -m src.train --reference-len 100    # R = 100 test run
 python -m src.report                       # print tables from results/
+python -m src.novelty_experiment --seeds 1 # RiskGate-CUSUM, ~4-8 min
+python -m src.demo                         # demo data, then open demo/index.html
 ```
 
-Snapshots of the results: `docs/results/` (main run) and `docs/results/label_experiment/` (label experiment and R = 100 run). Seeds 0–2; one CPU core; Python 3.13, NumPy, scikit-learn, river 0.26.
+Snapshots of the results: `docs/results/` (main run), `docs/results/label_experiment/` (label experiment and R = 100 run) and `docs/novelty/` (RiskGate-CUSUM). Seeds 0–2; one CPU core; Python 3.13, NumPy, scikit-learn, river 0.26.

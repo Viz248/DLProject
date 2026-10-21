@@ -5,7 +5,10 @@ run the full monitoring system on it, and give a verdict.
     python -m src.demo                              # all scenarios -> table + demo/demo_data.js
     python -m src.demo --scenario sudden --severity 0.25    # one scenario, detailed
 
-Needs a finished `python -m src.train` run (uses artifacts/lstm_params.npz).
+Needs a finished `python -m src.train` run (uses artifacts/lstm_params.npz) and
+docs/novelty/novelty_riskgate.json (RiskGate / CUSUM settings tuned on validation
+by src.novelty_experiment).  The first run trains the seed-0 GRU forecaster that
+RiskGate was tuned with (~1.5 min) and caches it in artifacts/.
 
 What runs, for every scenario
 -----------------------------
@@ -13,11 +16,19 @@ What runs, for every scenario
    the start of the test stream (same seeds, so the same model state).
 2. The test stream is modified from ONSET onward (or left alone for "none"),
    and the MLP keeps running test-then-train on it, adapting as it goes.
-3. ADWIN and DDM watch the MLP's error stream (fresh detectors at the start of
-   the test stream).  The trained LSTM reads the confidence/entropy windows and
-   alarms with the pipeline's adaptive rule (95th percentile of its own past
-   2000 outputs).
+3. Detectors on the MLP's error stream:
+   - existing: ADWIN and DDM (fresh detectors at the start of the test stream)
+     and a plain one-sided CUSUM;
+   - ours: RiskGate-CUSUM (src/riskgate.py), the CUSUM gated by the GRU
+     forecaster's risk, and the LSTM forecaster on its own (alarm when its
+     output exceeds the 95th percentile of its own past 2000 outputs).
+   CUSUM and RiskGate use the settings tuned on validation in
+   src/novelty_experiment.py, started with the errors and risks from before
+   the test stream, exactly as in that experiment.
 4. verdict() compares the REF steps before the onset with the MON steps after.
+   Only ADWIN and DDM confirm drift there: they test for a sustained change,
+   while CUSUM/RiskGate were tuned to catch short degradation episodes, which
+   also occur naturally in the undrifted stream.
 
 Scenarios (ground truth is known because we inject it)
 ------------------------------------------------------
@@ -42,10 +53,14 @@ from src.drift_detectors import run_adwin, run_ddm
 from src.sequence_dataset import make_windows
 from src.early_warning import alarms_from_probs_adaptive
 from src.rnn_layers import RNNDriftDetector
-from src.train import CFG, fit_norm, predict_all
+from src.riskgate import RiskGateParams
+from src.novelty_experiment import run_gate
+from src.train import CFG, fit_norm, predict_all, train_rnn
 
 ONSET, REF, MON, RAMP = 4000, 2000, 2000, 1500   # test-relative steps
 MIN_EFFECT = 0.05      # a drift must raise the error rate by >= 5 percentage points
+METHODS = ["ADWIN", "DDM", "CUSUM", "RiskGate", "LSTM"]
+NOVELTY_JSON = os.path.join("docs", "novelty", "novelty_riskgate.json")
 PRICES = [3, 5]   # feature columns nswprice, vicprice
 
 SCENARIOS = {
@@ -174,7 +189,7 @@ def verdict(err_ref, err_mon, alarms):
 # ------------------------------------------------------------------ #
 class System:
     """Builds the MLP state at the start of the test stream and the trained
-    LSTM once, then runs any number of scenarios from that state."""
+    forecasters once, then runs any number of scenarios from that state."""
 
     def __init__(self, artifacts="artifacts"):
         cfg = CFG
@@ -189,14 +204,42 @@ class System:
         self.mlp_at_test = mlp
         self.Xt, self.yt = X[ts:], y[ts:]
         self.period = load_raw(cfg["data"])["period"].to_numpy(float)[ts:]
-        # input normalisation of the LSTM = statistics of the training windows
-        Xw, _, c, _, _ = make_windows(conf, ent, err, cfg["window"], cfg["horizon"],
-                                      cfg["delta"])
-        self.mu, self.sd = fit_norm(Xw[c + ws < si["train_end"]])
+        # input normalisation of the forecasters = statistics of the training windows
+        Xw, yw, c, _, _ = make_windows(conf, ent, err, cfg["window"], cfg["horizon"],
+                                       cfg["delta"])
+        tr = c + ws < si["train_end"]
+        va = (c + ws >= si["val_start"]) & (c + ws < si["val_end"])
+        self.mu, self.sd = fit_norm(Xw[tr])
+        Ntr, ytr = (Xw[tr] - self.mu) / self.sd, yw[tr]
+        Nval, yval = (Xw[va] - self.mu) / self.sd, yw[va]
         # 20 steps of history so the first test window is complete
         self.hist = (conf[-cfg["window"]:], ent[-cfg["window"]:], err[-cfg["window"]:])
+        self.prefix_err = err
         self.lstm = RNNDriftDetector("lstm", n_in=2, n_hidden=cfg["n_hidden"])
         self.lstm.set_params(dict(np.load(os.path.join(artifacts, "lstm_params.npz"))))
+
+        # GRU forecaster that RiskGate was tuned with: seed 0, as in novelty_experiment
+        gpath = os.path.join(artifacts, "gru_seed0_params.npz")
+        pos_rate = float(ytr.mean())
+        pos_weight = ((1.0 - pos_rate) / pos_rate) ** cfg["pos_weight_power"]
+        self.gru = RNNDriftDetector("gru", n_in=2, n_hidden=cfg["n_hidden"],
+                                    lr=cfg["lr"], seed=0, pos_weight=pos_weight)
+        if os.path.exists(gpath):
+            self.gru.set_params(dict(np.load(gpath)))
+        else:
+            print("Training the seed-0 GRU forecaster for RiskGate (first run only)...",
+                  flush=True)
+            tr_idx = np.arange(0, len(Ntr), cfg["train_stride"])
+            v_sub = np.arange(0, len(Nval), 2)
+            self.gru, _, _ = train_rnn("gru", Ntr[tr_idx], ytr[tr_idx], Nval[v_sub],
+                                       yval[v_sub], pos_weight, 0, cfg)
+            np.savez(gpath, **self.gru.get_params())
+        self.val_risk = predict_all(self.gru, Nval)
+
+        with open(NOVELTY_JSON) as f:
+            tuned = json.load(f)["tuned_params"]
+        self.p_rg = RiskGateParams(**tuned["RiskGate-CUSUM"][0])
+        self.p_cusum = RiskGateParams(**tuned["CUSUM (plain)"][0])
         self.cfg = cfg
 
     def run(self, kind, sev):
@@ -214,9 +257,20 @@ class System:
         r_all = np.concatenate([self.hist[2], err])
         Xw, _, cen, _, _ = make_windows(c_all, e_all, r_all, w, cfg["horizon"], cfg["delta"])
         cen = cen - w                                   # test-relative prediction time
-        probs = predict_all(self.lstm, (Xw - self.mu) / self.sd)
+        Nw = (Xw - self.mu) / self.sd
+        probs = predict_all(self.lstm, Nw)
         lstm_alarms = alarms_from_probs_adaptive(
             probs, cen, cfg["alarm_quantile"], cfg["alarm_history"], 300, cfg["refractory"])
+
+        # CUSUM and RiskGate continue from the pre-test errors/risks, as in the experiment
+        g_risk = predict_all(self.gru, Nw)
+        off = len(self.prefix_err)
+        errs_all = np.concatenate([self.prefix_err, err])
+        warm = self.val_risk[-self.p_rg.rank_history:]
+        found = {**alarms,
+                 "CUSUM": run_gate(self.p_cusum, errs_all, cen + off, g_risk, warm) - off,
+                 "RiskGate": run_gate(self.p_rg, errs_all, cen + off, g_risk, warm) - off,
+                 "LSTM": lstm_alarms}
 
         ref, mon = slice(ONSET - REF, ONSET), slice(ONSET, ONSET + MON)
         v = verdict(err[ref], err[mon], alarms)
@@ -226,13 +280,9 @@ class System:
         mon_roll = roll[ONSET:ONSET + MON - 200]
         pk = int(np.argmax(mon_roll))
         v.update(
-            delay={"ADWIN": first_after(alarms["ADWIN"], ONSET),
-                   "DDM": first_after(alarms["DDM"], ONSET),
-                   "LSTM": first_after(lstm_alarms, ONSET)},
-            alarms_before={"ADWIN": in_ref(alarms["ADWIN"]), "DDM": in_ref(alarms["DDM"]),
-                           "LSTM": in_ref(lstm_alarms)},
-            alarms_after={"ADWIN": in_mon(alarms["ADWIN"]), "DDM": in_mon(alarms["DDM"]),
-                          "LSTM": in_mon(lstm_alarms)},
+            delay={k: first_after(found[k], ONSET) for k in METHODS},
+            alarms_before={k: in_ref(found[k]) for k in METHODS},
+            alarms_after={k: in_mon(found[k]) for k in METHODS},
             peak_err=float(mon_roll[pk]), peak_at=pk,
             flipped_share=float(flipped[ONSET:ONSET + MON].mean()),
             conf_before=float(conf[ref].mean()), conf_after=float(conf[mon].mean()),
@@ -253,8 +303,7 @@ class System:
         series = dict(t=ts.tolist(), err=np.round(rerr[ts], 4).tolist(),
                       conf=np.round(rconf[ts], 4).tolist(),
                       risk=np.round(rrisk, 4).tolist(),
-                      alarms={"ADWIN": win(alarms["ADWIN"]), "DDM": win(alarms["DDM"]),
-                              "LSTM": win(lstm_alarms)})
+                      alarms={k: win(found[k]) for k in METHODS})
         return v, series
 
 
@@ -276,11 +325,11 @@ def print_detail(kind, sev, v):
     print(f"  Error rate   {v['err_before']:.1%} -> {v['err_after']:.1%}   "
           f"({v['change_pp']:+.1f} pp{rel}; 95% CI {v['ci_pp'][0]:+.1f} to {v['ci_pp'][1]:+.1f} pp)")
     print(f"  Worst 200-step error rate after onset: {v['peak_err']:.1%} at +{v['peak_at']} steps")
-    print(f"  First alarm after onset: ADWIN {_fmt_delay(v['delay']['ADWIN'])}, "
-          f"DDM {_fmt_delay(v['delay']['DDM'])}")
+    print("  First alarm after onset: " + ", ".join(
+        f"{k} {_fmt_delay(v['delay'][k])}" for k in METHODS if k != "LSTM"))
     b, a = v["alarms_before"], v["alarms_after"]
-    print(f"  Alarms {REF} steps before / {MON} after onset: ADWIN {b['ADWIN']}/{a['ADWIN']}, "
-          f"DDM {b['DDM']}/{a['DDM']}, LSTM {b['LSTM']}/{a['LSTM']}")
+    print(f"  Alarms {REF} steps before / {MON} after onset: " + ", ".join(
+        f"{k} {b[k]}/{a[k]}" for k in METHODS))
     print(f"  Label-free signals: confidence {v['conf_before']:.3f} -> {v['conf_after']:.3f}, "
           f"LSTM risk {v['risk_before']:.3f} -> {v['risk_after']:.3f}")
 

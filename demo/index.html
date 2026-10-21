@@ -21,7 +21,9 @@
   --sel-ink: #ffffff;
   --s1: #2a78d6;   /* ADWIN */
   --s2: #eb6834;   /* DDM */
-  --s3: #1baf7a;   /* LSTM (ours) */
+  --s3: #1baf7a;   /* CUSUM */
+  --s4: #eda100;   /* RiskGate (ours) */
+  --s5: #e87ba4;   /* LSTM (ours) */
   --good: #0ca30c;
   --warn: #fab219;
   --crit: #d03b3b;
@@ -37,7 +39,7 @@
     --bg: #0f1216; --surface: #171b21; --sunken: #1e232a; --ink: #e7eaef; --ink-2: #a9b1bd;
     --ink-3: #7d8693; --line: #2b313a; --grid: #232830; --shade: rgba(208, 59, 59, 0.10);
     --sel: #e7eaef; --sel-ink: #0f1216;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
     --good-bg: rgba(12, 163, 12, 0.16); --warn-bg: rgba(250, 178, 25, 0.14); --crit-bg: rgba(208, 59, 59, 0.18);
     color-scheme: dark;
   }
@@ -46,7 +48,7 @@
   --bg: #0f1216; --surface: #171b21; --sunken: #1e232a; --ink: #e7eaef; --ink-2: #a9b1bd;
   --ink-3: #7d8693; --line: #2b313a; --grid: #232830; --shade: rgba(208, 59, 59, 0.10);
   --sel: #e7eaef; --sel-ink: #0f1216;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
   --good-bg: rgba(12, 163, 12, 0.16); --warn-bg: rgba(250, 178, 25, 0.14); --crit-bg: rgba(208, 59, 59, 0.18);
   color-scheme: dark;
 }
@@ -116,6 +118,10 @@ td .num, td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums
 .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; vertical-align: -1px; }
 .yes { font-weight: 600; }
 .no { color: var(--ink-3); }
+.kind { font: 500 11px/1 var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.kind.ours { color: var(--ink); }
+.group-row td { padding-top: 14px; border-bottom: 0; }
+.note { font-size: 13px; color: var(--ink-2); margin-top: 10px; max-width: 80ch; }
 
 .pill { display: inline-flex; align-items: center; gap: 6px; font: 600 12px/1 var(--f-mono); letter-spacing: 0.05em; text-transform: uppercase; padding: 5px 8px 5px 6px; border-radius: 3px; background: var(--vbg); color: var(--ink); }
 .pill i { width: 9px; height: 9px; border-radius: 50%; background: var(--vc); display: inline-block; }
@@ -169,7 +175,7 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
   <header>
     <span class="eyebrow">Concept drift demo · Elec2 electricity market</span>
     <h1>Is the model drifting?</h1>
-    <p>The full monitoring system replayed on the 8,117-step Elec2 test stream. Pick a scenario: we inject drift of a known type and size at step 4,000, the MLP keeps predicting and learning online, and ADWIN, DDM and our LSTM forecaster watch it. The verdict compares the 2,000 steps before the injection with the 2,000 after.</p>
+    <p>The full monitoring system replayed on the 8,117-step Elec2 test stream. Pick a scenario: we inject drift of a known type and size at step 4,000, the MLP keeps predicting and learning online, and five methods watch it: the existing detectors ADWIN, DDM and CUSUM, and our RiskGate-CUSUM and LSTM forecaster. The verdict compares the 2,000 steps before the injection with the 2,000 after.</p>
   </header>
 
   <section class="panel controls" aria-label="Scenario">
@@ -194,6 +200,7 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
       <span class="muted" style="font-size:13px">Alarms in the 2,000 steps before vs after the injection point</span>
     </div>
     <div class="tbl-wrap"><table id="det"></table></div>
+    <p class="note">CUSUM and RiskGate were tuned to catch short error spikes, which also happen in the undrifted stream (about one alarm every 400 steps). Compare their alarm counts before and after the injection; their first alarm is only meaningful when it comes much sooner than in the No drift scenario.</p>
   </section>
 
   <section class="panel">
@@ -252,7 +259,9 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
     ["none", "No drift"], ["sudden", "Sudden concept drift"],
     ["gradual", "Gradual concept drift"], ["covshift", "Feature shift"],
   ];
-  const DET = [["ADWIN", "--s1", "ADWIN"], ["DDM", "--s2", "DDM"], ["LSTM", "--s3", "LSTM (ours)"]];
+  const DET = [["ADWIN", "--s1", "ADWIN", "existing"], ["DDM", "--s2", "DDM", "existing"],
+               ["CUSUM", "--s3", "CUSUM", "existing"], ["RiskGate", "--s4", "RiskGate-CUSUM", "ours"],
+               ["LSTM", "--s5", "LSTM forecaster", "ours"]];
   const byId = Object.fromEntries(D.runs.map(r => [r.id, r]));
   const sevsOf = k => D.runs.filter(r => r.kind === k).map(r => r.severity);
   const state = { kind: "sudden", sev: 0.25 };
@@ -339,22 +348,26 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
 
   function renderDetectors(r) {
     const v = r.verdict;
-    const rows = DET.map(([k, c, name]) => {
+    const row = ([k, c, name]) => {
       const b = v.alarms_before[k], a = v.alarms_after[k];
-      let first = "—", conf = "";
+      let first, role;
       if (k === "LSTM") {
-        conf = `<span class="no">Not used in the verdict</span>`;
         first = a > b ? "more alarms after" : a < b ? "fewer alarms after" : "no change";
       } else {
         const d = v.delay[k];
         first = d === null ? "no alarm" : (d < M.mon ? `+${d.toLocaleString()} steps` : `+${d.toLocaleString()} (outside window)`);
-        conf = v.detectors_fired[k] ? `<span class="yes">Yes</span>` : `<span class="no">No</span>`;
       }
+      if (k === "ADWIN" || k === "DDM")
+        role = v.detectors_fired[k] ? `<span class="yes">Confirms drift</span>` : `<span class="no">Does not confirm</span>`;
+      else role = `<span class="no">Compared only</span>`;
       return `<tr><td><span class="swatch" style="background:var(${c})"></span>${name}</td>
-        <td class="r num">${b}</td><td class="r num">${a}</td><td class="num">${first}</td><td>${conf}</td></tr>`;
-    }).join("");
-    document.getElementById("det").innerHTML = `<thead><tr><th>Method</th><th class="r">Before</th><th class="r">After</th>
-      <th>First alarm after injection</th><th>Confirms drift</th></tr></thead><tbody>${rows}</tbody>`;
+        <td class="r num">${b}</td><td class="r num">${a}</td><td class="num">${first}</td><td>${role}</td></tr>`;
+    };
+    const group = (label, kind) => `<tr class="group-row"><td colspan="5"><span class="kind ${kind}">${label}</span></td></tr>` +
+      DET.filter(d => d[3] === kind).map(row).join("");
+    document.getElementById("det").innerHTML = `<thead><tr><th>Method</th><th class="r">Alarms before</th><th class="r">Alarms after</th>
+      <th>First alarm after injection</th><th>Verdict role</th></tr></thead>
+      <tbody>${group("Existing algorithms", "existing")}${group("Our algorithms", "ours")}</tbody>`;
   }
 
   function renderMatrix() {
@@ -363,17 +376,20 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
       const truth = r.kind === "none" ? "Nothing" : r.kind === "covshift" ? `Inputs +${r.severity} σ`
         : `${pct(v.flipped_share, 0)} labels flipped`;
       const dl = k => v.delay[k] === null || v.delay[k] >= M.mon ? "—" : "+" + v.delay[k];
+      const ba = k => `${v.alarms_before[k]} → ${v.alarms_after[k]}`;
       return `<tr tabindex="0" data-id="${r.id}" aria-current="${cur}">
         <td>${KINDS.find(k => k[0] === r.kind)[1]}${r.kind === "none" ? "" : " · " + sevLabel(r.kind, r.severity)}</td>
         <td>${truth}</td>
         <td class="${vClass(v.label)}"><span class="pill"><i></i>${vName(v.label)}${v.severity ? " · " + v.severity : ""}</span></td>
         <td class="r num">${pct(v.acc_before)} → ${pct(v.acc_after)}</td>
         <td class="r num">${pp(v.change_pp)}</td>
-        <td class="r num">${dl("ADWIN")}</td><td class="r num">${dl("DDM")}</td></tr>`;
+        <td class="r num">${dl("ADWIN")}</td><td class="r num">${dl("DDM")}</td>
+        <td class="r num">${ba("CUSUM")}</td><td class="r num">${ba("RiskGate")}</td></tr>`;
     }).join("");
     const t = document.getElementById("matrix");
     t.innerHTML = `<thead><tr><th>Scenario</th><th>Injected</th><th>Verdict</th><th class="r">Accuracy</th>
-      <th class="r">Error change</th><th class="r">ADWIN delay</th><th class="r">DDM delay</th></tr></thead><tbody>${rows}</tbody>`;
+      <th class="r">Error change</th><th class="r">ADWIN delay</th><th class="r">DDM delay</th>
+      <th class="r">CUSUM alarms</th><th class="r">RiskGate alarms</th></tr></thead><tbody>${rows}</tbody>`;
   }
   const matrixEl = document.getElementById("matrix");
   function pickRow(tr) { const r = byId[tr.dataset.id]; select(r.kind, r.severity); }
@@ -386,7 +402,7 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
   function renderRules() {
     document.getElementById("rules").innerHTML = `
       <div class="rule"><span class="v-drift"><span class="pill"><i></i>Drift detected</span></span>
-        <p>The error rate rose significantly (95% CI above zero), by at least ${M.min_effect_pp} percentage points, and ADWIN or DDM raised an alarm. Severity: mild under 10 pp, moderate 10–20 pp, severe above 20 pp.</p></div>
+        <p>The error rate rose significantly (95% CI above zero), by at least ${M.min_effect_pp} percentage points, and ADWIN or DDM raised an alarm. These two test for a sustained change, so they are the ones that confirm drift. Severity: mild under 10 pp, moderate 10–20 pp, severe above 20 pp.</p></div>
       <div class="rule"><span class="v-unc"><span class="pill"><i></i>Uncertain</span></span>
         <p>The evidence disagrees. For example, the error rate rose but no detector confirmed it, or a detector fired while the change stayed under ${M.min_effect_pp} pp.</p></div>
       <div class="rule"><span class="v-none"><span class="pill"><i></i>No drift</span></span>
@@ -399,8 +415,8 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
   const charts = [];
   function lineChart(el, r, key, o) {
     const s = r.series, W = Math.max(280, el.clientWidth);
-    const strip = o.strip ? 3 * 16 + 10 : 0;
-    const H = o.h, padL = 46, padR = 12, padT = 8, padB = 24 + strip;
+    const strip = o.strip ? DET.length * 16 + 10 : 0;
+    const H = o.h, padL = 66, padR = 12, padT = 8, padB = 24 + strip;
     const t0 = M.onset - M.ref, t1 = M.onset + M.mon;
     const x = t => padL + (t - t0) / (t1 - t0) * (W - padL - padR);
     const y = v => padT + (1 - (v - o.min) / (o.max - o.min)) * (H - padT - padB);
@@ -491,7 +507,7 @@ code { font-family: var(--f-mono); font-size: 13px; background: var(--sunken); p
     charts.length = 0;
     const v = r.verdict;
     lineChart(document.getElementById("c-err"), r, "err", {
-      h: 290, min: 0, max: 0.5, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5], fmt: x => Math.round(x * 100) + "%",
+      h: 340, min: 0, max: 0.5, ticks: [0, 0.1, 0.2, 0.3, 0.4, 0.5], fmt: x => Math.round(x * 100) + "%",
       means: [v.err_before, v.err_after], strip: true, onsetLabel: true,
       aria: `MLP error rate from ${pct(v.err_before)} before to ${pct(v.err_after)} after the injection point, with detector alarms`,
     });
